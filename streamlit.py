@@ -11,9 +11,9 @@ import streamlit as st
 st.set_page_config(page_title="전공별 자격증 대시보드", layout="wide", page_icon="🎓")
 st.title("🎓 전공별 자격증 난이도·합격률 대시보드")
 
-CERT_PATHS  = ["data_cert.xlsx"]
-MAJOR_PATHS = ["data_major.xlsx"]
-JOBS_PATHS  = ["data_jobs.xlsx"]
+CERT_PATHS  = ["data/data_cert.xlsx"]
+MAJOR_PATHS = ["data/data_major.xlsx"]
+JOBS_PATHS  = ["data/data_jobs.xlsx"]
 
 YEARS  = [2022, 2023, 2024]
 PHASES = ["1차", "2차", "3차"]
@@ -350,5 +350,6 @@ with st.expander("다운로드"):
         file_name="license_filtered.csv",
         mime="text/csv",
     )
+
 
 
