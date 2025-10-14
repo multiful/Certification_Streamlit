@@ -1,6 +1,8 @@
 streamlit
 pandas
 Pillow
+openpyxl
+numpy
 plotly
 matplotlib>=3.0
 folium
