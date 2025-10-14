@@ -1,0 +1,19 @@
+# .streamlit/config.toml
+[theme]
+base = "light"                # "dark"도 가능
+primaryColor = "#2563eb"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f8fafc"
+textColor = "#0f172a"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"       # 상단 툴바 최소화
+showErrorDetails = true       # 배포시 false로도 가능
+
+[server]
+maxUploadSize = 200           # MB
+enableXsrfProtection = true
+
+[browser]
+gatherUsageStats = false
