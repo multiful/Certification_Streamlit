@@ -11,9 +11,9 @@ import streamlit as st
 st.set_page_config(page_title="전공별 자격증 대시보드", layout="wide", page_icon="🎓")
 st.title("🎓 전공별 자격증 난이도·합격률 대시보드")
 
-CERT_PATHS  = ["data/data_cert.xlsx"]
-MAJOR_PATHS = ["data/data_major.xlsx"]
-JOBS_PATHS  = ["data/data_jobs.xlsx"]
+CERT_PATHS  = ["1010자격증데이터_통합.xlsx",'data/data_cert.xlsx']
+MAJOR_PATHS = ["1013전공정보통합_final.xlsx",'data/data_major.xlsx']
+JOBS_PATHS  = ["직무분류데이터_병합완_with_ID_v3.xlsx",'data/data_jobs.xlsx']  # 자격증ID 매핑 파일
 
 YEARS  = [2022, 2023, 2024]
 PHASES = ["1차", "2차", "3차"]
@@ -182,7 +182,7 @@ with st.sidebar:
                 )
         st.divider()
 
-    st.header("검색/필터")
+    st.header("검색 or 필터")
     q = st.text_input("자격증명 검색", value="")
 
     cls_options = sorted(df[CLS_COL].dropna().astype(str).unique().tolist())
@@ -206,7 +206,7 @@ with st.sidebar:
     want_p = c2.toggle("실기", value=False)
     want_i = c3.toggle("면접", value=False)
 
-    sel_lv    = st.multiselect("난이도 등급(1~5)", options=[1,2,3,4,5], default=[1,2,3,4,5])
+    sel_lv    = st.multiselect("난이도 등급(1(easy)~5(hard))", options=[1,2,3,4,5], default=[1,2,3,4,5])
     page_size = st.slider("페이지당 카드 수", 6, 60, 12, step=6, help="한 번에 몇 개의 카드를 볼지")
 
 # ─────────── 필터 적용 ───────────
@@ -350,6 +350,3 @@ with st.expander("다운로드"):
         file_name="license_filtered.csv",
         mime="text/csv",
     )
-
-
-
