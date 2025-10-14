@@ -42,6 +42,38 @@ apply_pretty_style()
 
 # ───────────────── 기본 ─────────────────
 st.set_page_config(page_title="전공별 자격증 대시보드", layout="wide", page_icon="🎓")
+def tune_ui(max_width: int = 1500, base_font_px: int = 15, scale: float = 1.0):
+    """
+    - max_width: 중앙 컨테이너 최대 폭
+    - base_font_px: 앱 기본 글자 크기(상대 스케일에 영향)
+    - scale: Chrome 계열만 적용되는 zoom 대체(0.9=90%). Firefox에선 무시됨.
+    """
+    st.markdown(f"""
+    <style>
+      /* 중앙 컨테이너 폭 & 여백 */
+      .block-container {{
+        max-width: {max_width}px;
+        padding-top: 1.0rem;
+        padding-bottom: 3rem;
+      }}
+
+      /* 전체 기본 글자 크기(상대 크기 기준) */
+      html, body, [class*="css"] {{
+        font-size: {base_font_px}px;
+      }}
+
+      /* metric/배지/버튼 등 약간 컴팩트하게 */
+      div[data-testid="stMetricValue"] {{ font-weight: 700; }}
+      div[data-testid="stMetricLabel"] {{ color: #64748b; }}
+
+      /* (선택) Chrome 전용 줌 효과 — Firefox에선 무시됨 */
+      html {{ zoom: {scale}; }}
+    </style>
+    """, unsafe_allow_html=True)
+
+# 사용 예: 넓게(1500px), 살짝 작게(14px), 90% 스케일
+tune_ui(max_width=1500, base_font_px=14, scale=0.9)
+
 st.title("🎓 전공별 자격증 난이도·합격률 대시보드")
 
 CERT_PATHS  = ["1010자격증데이터_통합.xlsx", "data/data_cert.xlsx"]
@@ -575,3 +607,4 @@ with c_info:
 with c_next:
     if st.button("다음 ▶", use_container_width=True, disabled=(page >= max_pages), key="next_btn"):
         st.session_state.page = min(max_pages, page + 1); _safe_rerun()
+
