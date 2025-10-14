@@ -42,37 +42,55 @@ apply_pretty_style()
 
 # ───────────────── 기본 ─────────────────
 st.set_page_config(page_title="전공별 자격증 대시보드", layout="wide", page_icon="🎓")
-def tune_ui(max_width: int = 1500, base_font_px: int = 15, scale: float = 1.0):
+def tune_ui(max_width: int | None = 1500,
+            base_font_px: int = 15,
+            scale: float = 1.0,
+            full_bleed: bool = False):
     """
-    - max_width: 중앙 컨테이너 최대 폭
-    - base_font_px: 앱 기본 글자 크기(상대 스케일에 영향)
-    - scale: Chrome 계열만 적용되는 zoom 대체(0.9=90%). Firefox에선 무시됨.
+    - max_width: 중앙 컨테이너 최대 폭(px). full_bleed=False일 때만 적용
+    - base_font_px: 앱 기본 글자 크기
+    - scale: 브라우저 줌 대체(Chrome 위주)
+    - full_bleed: True면 화면 가로 전체(좌우 여백만 유지)
     """
+    if full_bleed:
+        container_css = """
+        [data-testid="stAppViewContainer"] > .main .block-container {
+          max-width: 100%;
+          padding-left: 1.0rem;
+          padding-right: 1.0rem;
+        }
+        """
+    else:
+        container_css = f"""
+        [data-testid="stAppViewContainer"] > .main .block-container {{
+          max-width: {max_width}px;
+          padding-left: 1.0rem;
+          padding-right: 1.0rem;
+        }}
+        """
     st.markdown(f"""
     <style>
-      /* 중앙 컨테이너 폭 & 여백 */
-      .block-container {{
-        max-width: {max_width}px;
-        padding-top: 1.0rem;
-        padding-bottom: 3rem;
-      }}
+      {container_css}
 
-      /* 전체 기본 글자 크기(상대 크기 기준) */
       html, body, [class*="css"] {{
         font-size: {base_font_px}px;
       }}
+      /* 카드/컬럼 사이 여백 살짝 줄이기(선택) */
+      div[data-testid="stHorizontalBlock"] {{
+        gap: 0.9rem;
+      }}
 
-      /* metric/배지/버튼 등 약간 컴팩트하게 */
-      div[data-testid="stMetricValue"] {{ font-weight: 700; }}
-      div[data-testid="stMetricLabel"] {{ color: #64748b; }}
+      /* 버튼 꽉 차게 보이도록 */
+      .stButton > button {{
+        width: 100%;
+      }}
 
-      /* (선택) Chrome 전용 줌 효과 — Firefox에선 무시됨 */
+      /* Chrome 전용 줌 효과 */
       html {{ zoom: {scale}; }}
     </style>
     """, unsafe_allow_html=True)
 
-# 사용 예: 넓게(1500px), 살짝 작게(14px), 90% 스케일
-tune_ui(max_width=1500, base_font_px=14, scale=0.9)
+tune_ui(full_bleed=True, base_font_px=14, scale=0.9)
 
 st.title("🎓 전공별 자격증 난이도·합격률 대시보드")
 
@@ -607,4 +625,5 @@ with c_info:
 with c_next:
     if st.button("다음 ▶", use_container_width=True, disabled=(page >= max_pages), key="next_btn"):
         st.session_state.page = min(max_pages, page + 1); _safe_rerun()
+
 
