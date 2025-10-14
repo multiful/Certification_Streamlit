@@ -42,7 +42,7 @@ df_major  = read_first(MAJOR_PATHS)
 df_jobs   = read_first(JOBS_PATHS)
 
 if df is None:
-    st.error("자격증 엑셀(1010자격증데이터_통합.xlsx)을 찾지 못했습니다.")
+    st.error("자격증 엑셀을 찾지 못했습니다.")
     st.stop()
 
 # 직무 파일 키 컬럼 통일
@@ -168,7 +168,7 @@ with st.sidebar:
 
     if use_major:
         if df_major is None:
-            st.error("전공 엑셀(1013전공정보통합_final.xlsx)을 찾지 못했습니다.")
+            st.error("전공 엑셀을 찾지 못했습니다.")
         else:
             major_name_col, major_id_col = "학과명", "자격증ID"
             majors_all = sorted(df_major[major_name_col].astype(str).unique().tolist())
@@ -350,4 +350,5 @@ with st.expander("다운로드"):
         file_name="license_filtered.csv",
         mime="text/csv",
     )
+
 
