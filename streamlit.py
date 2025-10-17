@@ -68,13 +68,31 @@ def _num_in_text(x):
     m = re.search(r"[-+]?\d*\.?\d+", s)
     return float(m.group(0)) if m else np.nan
 
-# 스크롤-투-탑 (버튼 누를 때 켜고 한 번만 실행)
 def _emit_scroll_to_top_if_needed():
     if st.session_state.pop("_scroll_to_top", False):
         st.markdown(
-            "<script>window.scrollTo({top:0, left:0, behavior:'smooth'});</script>",
+            """
+            <script>
+            (function(){
+              function goTop(){
+                try {
+                  window.scrollTo({top:0, left:0, behavior:'smooth'});
+                  const main = document.querySelector('section.main');
+                  if (main && main.scrollTo) main.scrollTo({top:0, left:0, behavior:'smooth'});
+                  if (window.parent && window.parent !== window) {
+                    try { window.parent.scrollTo({top:0,left:0,behavior:'smooth'}); } catch(e){}
+                  }
+                } catch(e){}
+              }
+              setTimeout(goTop, 0);
+              setTimeout(goTop, 150);
+              setTimeout(goTop, 300);
+            })();
+            </script>
+            """,
             unsafe_allow_html=True
         )
+
 
 # 상세 텍스트 예쁘게 포매팅
 def render_detail_html(text: str) -> str:
@@ -210,9 +228,22 @@ with st.sidebar:
         else:
             major_name_col, major_id_col = "학과명","자격증ID"
             majors_all = sorted(df_major[major_name_col].astype(str).unique().tolist())
-            qmaj = st.text_input("전공 검색", value="")
-            majors_view=[m for m in majors_all if qmaj.strip()=="" or qmaj.lower() in m.lower()]
-            sel_major = st.selectbox("학과명", ["(선택)"]+majors_view, index=0, key="major_select")
+            def _on_major_query_change():
+                # 검색어 바꾸면 드롭다운을 "(선택)"으로 리셋하여 즉시 필터 적용
+                st.session_state["major_select"] = "(선택)"
+
+            qmaj = st.text_input(
+                "전공 검색",
+                value=st.session_state.get("maj_q", ""),
+                key="maj_q",
+                placeholder="전공명을 입력하세요",
+                on_change=_on_major_query_change,
+            )
+
+            majors_view = [m for m in majors_all if (qmaj.strip()=="" or qmaj.lower() in m.lower())]
+
+            # 옵션이 바뀌어도 selection이 남지 않도록 키는 그대로, index=0 고정
+            sel_major = st.selectbox("학과명", ["(선택)"] + majors_view, index=0, key="major_select")
 
             if sel_major != st.session_state["last_selected_major"]:
                 for k in ("selected_license","selected_job_seq","selected_job_title"):
@@ -236,23 +267,16 @@ with st.sidebar:
                             st.markdown(f"**취업률(전체)** : {r_all:.1f}%  \n")
                             # ▼▼ 이 블록 전체 교체 ▼▼
                             if pd.notna(r_m) or pd.notna(r_f):
-                                # 사이드바 폭을 넘지 않도록 작은 기본 크기 + 컨테이너 폭에 맞춰 리사이즈
-                                size_in = 2.3 if IS_MOBILE else 2.6  # inch
-                                fig, ax = plt.subplots(
-                                    figsize=(size_in, size_in),
-                                    dpi=220,
-                                    facecolor="white",
-                                    constrained_layout=False,
-                                )
+                                size_in = 2.1 if IS_MOBILE else 2.6  # inch (모바일은 더 작게)
+                                fig, ax = plt.subplots(figsize=(size_in, size_in), dpi=220, facecolor="white")
                                 ax.set_facecolor("white")
 
-                                # 이중 링 게이지
                                 def _draw_dual_ring(ax, male_pct, female_pct, start_angle=90, clockwise=True):
                                     def _clamp(x):
                                         try: x = float(x)
                                         except Exception: x = 0.0
                                         return max(0.0, min(100.0, x))
-                                    m = _clamp(male_pct); f = _clamp(female_pct)
+                                    m, f = _clamp(male_pct), _clamp(female_pct)
 
                                     r_outer, w_outer = 1.10, 0.22
                                     r_inner, w_inner = 0.83, 0.22
@@ -263,23 +287,22 @@ with st.sidebar:
                                         t1, t2 = (start_angle - span, start_angle) if clockwise else (start_angle, start_angle + span)
                                         ax.add_patch(Wedge((0,0), r, t1, t2, width=w, facecolor=color, edgecolor="none", zorder=z))
 
-                                    # 트랙 + 값
-                                    _arc(r_outer, w_outer, 100, c_track, 0); _arc(r_inner, w_inner, 100, c_track, 0)
-                                    _arc(r_outer, w_outer, m, c_male, 2);    _arc(r_inner, w_inner, f, c_female, 2)
+                                    _arc(r_outer,w_outer,100,c_track,0); _arc(r_inner,w_inner,100,c_track,0)
+                                    _arc(r_outer,w_outer,m,c_male,2);    _arc(r_inner,w_inner,f,c_female,2)
 
-                                    # 가운데 구멍
                                     ax.add_patch(Circle((0,0), r_inner-0.22, facecolor="white", edgecolor="none", zorder=3))
-
-                                    # 여백/클리핑 정리 (사이드바 테두리 안에 딱 맞게)
                                     ax.set_xlim(-1.25, 1.25); ax.set_ylim(-1.15, 1.15)
                                     ax.set_aspect("equal"); ax.axis("off")
 
-                                _draw_dual_ring(ax, r_m, r_f, start_angle=90, clockwise=True)
-                                # 바깥 여백 제거
+                                _draw_dual_ring(ax, r_m, r_f)
                                 fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
-                                # 컨테이너 폭에 맞춰 출력 → 테두리 넘침 방지
-                                st.pyplot(fig, use_container_width=True)
+                                # 🔥 PNG로 렌더해서 사이드바 폭에 100%로 맞춤
+                                buf = io.BytesIO()
+                                fig.savefig(buf, format="png", dpi=220, bbox_inches="tight", pad_inches=0)
+                                buf.seek(0)
+                                st.image(buf, use_column_width=True)   # ← 테두리 안에 꽉 차게
+                                plt.close(fig)
 
                                 st.markdown(
                                     f"""
@@ -299,6 +322,7 @@ with st.sidebar:
                                     unsafe_allow_html=True
                                 )
                             # ▲▲ 여기까지 교체 ▲▲
+
 
     st.divider()
     st.header("검색 / 필터")
@@ -444,7 +468,7 @@ def plot_yearly_pass_rates(row: pd.Series, lic_name: str):
     hide_spines(ax)
     fig.tight_layout(pad=0.4)
     _, mid, _ = st.columns([1, 2, 1])
-    
+
     with mid:
         st.pyplot(fig, use_container_width=True)
 
