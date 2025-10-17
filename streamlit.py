@@ -1,19 +1,36 @@
 # -*- coding: utf-8 -*-
 # 전공별 자격증 대시보드 — 내부 난이도 계산 + 하단 페이지네이션
-# '국가기술자격' 선택 시에만 등급코드 필터 노출
-# 라이선스 카드 → [관련 직무 보기] → 직무 카드 목록(학과명 표시) → [상세 정보] → 직업정보 상세 패널
 
-import re
+import re, io, qrcode
 import numpy as np
 import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
-from matplotlib.patches import Wedge, Circle 
+from matplotlib.patches import Wedge, Circle
 from matplotlib import font_manager, rcParams
 
-# ── Matplotlib 한글 + 공통 스타일 ─────────────────────────
+# -------------------------------------------------
+# 기본 설정
+# -------------------------------------------------
+BASE_URL = "https://certificationapp-brnj3ctcykqixb9uyz9fb2.streamlit.app"
+
+st.set_page_config(page_title="전공별 자격증 대시보드", layout="wide", page_icon="🎓")
+
+def get_query_params():
+    try:
+        return dict(st.query_params)
+    except Exception:
+        return {k: (v[0] if isinstance(v, list) else v)
+                for k, v in st.experimental_get_query_params().items()}
+
+def set_query_params(**kwargs):
+    try:
+        st.query_params.update(kwargs)
+    except Exception:
+        st.experimental_set_query_params(**kwargs)
+
 def use_korean_font():
-    candidates = ["Malgun Gothic", "AppleGothic", "NanumGothic", "Noto Sans CJK KR", "DejaVu Sans"]
+    candidates = ["Malgun Gothic","AppleGothic","NanumGothic","Noto Sans CJK KR","DejaVu Sans"]
     installed = {f.name for f in font_manager.fontManager.ttflist}
     for f in candidates:
         if f in installed:
@@ -32,138 +49,113 @@ def apply_pretty_style():
         "grid.alpha": 0.35,
     })
 
-import numpy as np
-
-def draw_dual_ring(ax, male_pct, female_pct,
-                   start_angle: float = 90,      # 12시
-                   clockwise: bool = True,
-                   show_start_tick: bool = True,
-                   inside_labels: bool = False):
-
-    def _clamp(x):
-        try: x = float(x)
-        except Exception: x = 0.0
-        return max(0.0, min(100.0, x))
-
-    m = _clamp(male_pct); f = _clamp(female_pct)
-
-    r_outer, w_outer = 1.15, 0.22
-    r_inner, w_inner = 0.88, 0.22
-    c_male, c_female, c_track = "#2563eb", "#ef4444", "#e5e7eb"
-
-    # ✅ 방향/길이 수정: 시계방향이면 [start - span → start] 로 그린다
-    def _arc(r, w, pct, color, z=1):
-        span = 360.0 * pct / 100.0
-        if clockwise:
-            t1, t2 = start_angle - span, start_angle
-        else:
-            t1, t2 = start_angle, start_angle + span
-        ax.add_patch(Wedge((0,0), r, t1, t2, width=w,
-                           facecolor=color, edgecolor="none", zorder=z))
-
-    # 트랙
-    _arc(r_outer, w_outer, 100, c_track, z=0)
-    _arc(r_inner, w_inner, 100, c_track, z=0)
-
-    # 값
-    _arc(r_outer, w_outer, m, c_male, z=2)     # 남(파랑)
-    _arc(r_inner, w_inner, f, c_female, z=2)   # 여(빨강)
-
-    # 중앙 구멍
-    ax.add_patch(Circle((0,0), r_inner-0.22, facecolor="white", edgecolor="none", zorder=3))
-
-    # 시작 틱
-    if show_start_tick:
-        th = np.deg2rad(start_angle)
-        def _tick(r, w, color):
-            x0, y0 = (r - w - 0.01) * np.cos(th), (r - w - 0.01) * np.sin(th)
-            x1, y1 = (r + 0.01)     * np.cos(th), (r + 0.01)     * np.sin(th)
-            ax.plot([x0, x1], [y0, y1], color=color, linewidth=2.4, solid_capstyle="round", zorder=4)
-        _tick(r_outer, w_outer, c_male)
-        _tick(r_inner, w_inner, c_female)
-
-    ax.set_xlim(-1.35, 1.35); ax.set_ylim(-1.25, 1.25)
-    ax.set_aspect("equal"); ax.axis("off")
-
-
-def hide_spines(ax):
-    for s in ["top", "right"]:
-        if s in ax.spines: ax.spines[s].set_visible(False)
-
-def _clear_related_selections():
-    # 관련 직무/자격증/상세 선택 상태 초기화
-    st.session_state.pop("selected_license", None)
-    st.session_state.pop("selected_job_seq", None)
-    st.session_state.pop("selected_job_title", None)
-    # 페이지도 처음으로
-    st.session_state.page = 1
-
-
-
 use_korean_font()
 apply_pretty_style()
 
+# -------------------------------------------------
+# 공통 유틸
+# -------------------------------------------------
+def hide_spines(ax):
+    for s in ("top","right"):
+        if s in ax.spines:
+            ax.spines[s].set_visible(False)
 
-# ───────────────── 기본 ─────────────────
-st.set_page_config(page_title="전공별 자격증 대시보드", layout="wide", page_icon="🎓")
+def _to_key(series):
+    return pd.Series(series, dtype="object").astype(str).str.strip()
+
+def badge(t): return f"<span class='pill'>{t}</span>"
+
+def fmt_int(x):
+    if pd.isna(x): return "-"
+    try: return f"{int(round(float(x))):,}"
+    except Exception: return "-"
+
+def _num_in_text(x):
+    s = "" if x is None else str(x)
+    m = re.search(r"[-+]?\d*\.?\d+", s)
+    return float(m.group(0)) if m else np.nan
+
+# 스크롤-투-탑 (버튼 누를 때 켜고 한 번만 실행)
+def _emit_scroll_to_top_if_needed():
+    if st.session_state.pop("_scroll_to_top", False):
+        st.markdown(
+            "<script>window.scrollTo({top:0, left:0, behavior:'smooth'});</script>",
+            unsafe_allow_html=True
+        )
+
+# -------------------------------------------------
+# 스타일 / CSS
+# -------------------------------------------------
 st.title("🎓 전공별 자격증 난이도·합격률 대시보드")
-
 st.markdown("""
 <style>
-.detail-box{
-  white-space:pre-wrap; line-height:1.7;
-  background:#f8fbff; border:1px solid #e9ecef; border-radius:10px;
-  padding:12px; margin:6px 0 16px 0;
-  color:#111827;
-}
-/* ⬇ 배지(라벨) 공통 스타일 — 모바일/다크모드에서도 선명하게 보이도록 */
-.pill{
-  display:inline-block;
-  padding:4px 10px;
-  border-radius:999px;
-  background:rgba(248,249,250,.95);
-  border:1px solid #dee2e6;
-  font-size:11px;
-  color:#111827;   /* 다크모드에서도 글자색 유지 */
-  margin-right:6px;
-  margin-bottom:6px;
-}
-.pill-row{
-  display:flex;
-  flex-wrap:wrap;
-  gap:6px;
-  margin-bottom:2px;
-}
-@media (max-width:480px){
-  .pill{ font-size:12px; padding:4px 12px; }  /* 모바일 가독성 */
-}
+.detail-box{white-space:pre-wrap;line-height:1.7;background:#f8fbff;border:1px solid #e9ecef;border-radius:10px;padding:12px;margin:6px 0 16px 0;color:#111827;}
+.pill{display:inline-block;padding:4px 10px;border-radius:999px;background:rgba(248,249,250,.95);border:1px solid #dee2e6;font-size:11px;color:#111827;margin-right:6px;margin-bottom:6px;}
+.pill-row{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:2px;}
+@media (max-width:480px){.pill{font-size:12px;padding:4px 12px;}}
 </style>
 """, unsafe_allow_html=True)
 
-
-
-
-
-
+# -------------------------------------------------
+# 데이터 경로 / 정수화
+# -------------------------------------------------
 CERT_PATHS  = ["1010자격증데이터_통합.xlsx", "data/data_cert.xlsx"]
 MAJOR_PATHS = ["1013전공정보통합_final.xlsx", "data/data_major.xlsx"]
-JOBS_PATHS  = ["직무분류데이터_병합완_with_ID_v3.xlsx", "data/data_jobs.xlsx"]     # 자격증ID ↔ jobdicSeq 매핑
-JOBINFO_PATHS = ["직업정보_데이터.xlsx", "data/job_info.xlsx"]                     # jobdicSeq 상세 정보
+JOBS_PATHS  = ["직무분류데이터_병합완_with_ID_v3.xlsx", "data/data_jobs.xlsx"]
+JOBINFO_PATHS = ["직업정보_데이터.xlsx", "data/job_info.xlsx"]
 
 YEARS  = [2022, 2023, 2024]
-PHASES = ["1차", "2차", "3차"]
-GRADE_LABELS = {100:"기술사(100)", 200:"기능장(200)", 300:"기사(300)", 400:"산업기사(400)", 500:"기능사(500)"}
+PHASES = ["1차","2차","3차"]
+GRADE_LABELS = {100:"기술사(100)",200:"기능장(200)",300:"기사(300)",400:"산업기사(400)",500:"기능사(500)"}
+NAME_COL, ID_COL, CLS_COL = "자격증명","자격증ID","자격증_분류"
+GRADE_COL, GRADE_TYPE_COL = "자격증_등급_코드","등급_분류"
+FREQ_COL, STRUCT_COL = "검정 횟수","시험종류"
+W_COL, P_COL, I_COL = "필기","실기","면접"
+JOB_ID_COL, JOB_SEQ_COL = "자격증ID","jobdicSeq"
 
-# 난이도 가중치
-SCORING = {
-    "trust_floor":0.5, "trust_span":0.5,   # 응시자수 신뢰가중
-    "bonus_prac":0.15, "bonus_intv":0.10,  # 구조 가산
-    "bonus_grade_max":0.20,                # (500-등급)/400 × max
-    "bonus_freq_max":0.10,                 # 검정횟수(적을수록 +)
-    "bonus_prof":0.20, "bonus_tech":0.10, "bonus_priv":0.00  # 분류 가산
+PASS_RATE_COLS = {
+    2022: {"1차":"2022년 1차 합격률","2차":"2022년 2차 합격률","3차":"2022년 3차 합격률"},
+    2023: {"1차":"2023년 1차 합격률","2차":"2023년 2차 합격률","3차":"2023년 3차 합격률"},
+    2024: {"1차":"2024년 1차 합격률","2차":"2024년 2차 합격률","3차":"2024년 3차 합격률"},
 }
+APPL_COLS = {
+    2022: {"1차":"2022년 1차 응시자 수","2차":"2022년 2차 응시자수","3차":"2022년 3차 응시자수"},
+    2023: {"1차":"2023년 1차 응시자 수","2차":"2023년 2차 응시자 수","3차":"2023년 3차 응시자 수"},
+    2024: {"1차":"2024년 1차 응시자 수","2차":"2024년 2차 응시자 수","3차":"2024년 3차 응시자 수"},
+}
+num = lambda s: pd.to_numeric(s, errors="coerce")
 
-# ──────────────── 데이터 로드 ────────────────
+# -------------------------------------------------
+# 모바일 레이아웃 토글 (URL ?m=1)
+# -------------------------------------------------
+_q = get_query_params()
+IS_MOBILE = str(_q.get("m","0")) == "1"
+
+# -------------------------------------------------
+# 사이드바
+# -------------------------------------------------
+with st.sidebar:
+    m_switch = st.toggle("모바일 레이아웃(강제)", value=IS_MOBILE,
+                         help="모바일에서 QR로 들어오면 자동으로 m=1이 붙습니다.")
+    if m_switch != IS_MOBILE:
+        IS_MOBILE = m_switch
+        set_query_params(m=("1" if IS_MOBILE else "0"), **{k:v for k,v in _q.items() if k!="m"})
+
+# --- QR: 항상 사이드바 전용으로만 표시 (상세 열려있으면 다운로드 숨김) ----
+def render_qr_home(show_download: bool = True):
+    qr = qrcode.QRCode(version=1, box_size=5, border=2)
+    qr.add_data(BASE_URL)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = io.BytesIO(); img.save(buf, format="PNG"); png = buf.getvalue()
+    st.image(png, caption="앱 홈 QR", width=110)
+    if show_download:
+        st.download_button("QR PNG 다운로드", data=png,
+                           file_name="cert_dashboard_qr.png", mime="image/png")
+
+# -------------------------------------------------
+# 데이터 로드
+# -------------------------------------------------
 def read_first(paths):
     for p in paths:
         try:
@@ -181,234 +173,108 @@ if df is None:
     st.error("자격증 엑셀을 찾지 못했습니다.")
     st.stop()
 
-# 공통 키
-NAME_COL, ID_COL, CLS_COL = "자격증명", "자격증ID", "자격증_분류"
-GRADE_COL, GRADE_TYPE_COL = "자격증_등급_코드", "등급_분류"
-FREQ_COL, STRUCT_COL      = "검정 횟수", "시험종류"
-W_COL, P_COL, I_COL       = "필기", "실기", "면접"
-
-# 직무/직업 정보 키 정규화
-# ── 키 정규화(문자열 + strip) ─────────────────────────
-JOB_ID_COL  = "자격증ID"
-JOB_SEQ_COL = "jobdicSeq"
-
-def _to_key(series):
-    return pd.Series(series, dtype="object").astype(str).str.strip()
-
 if df_jobs is not None:
-    if JOB_ID_COL  in df_jobs.columns:
-        df_jobs[JOB_ID_COL] = _to_key(df_jobs[JOB_ID_COL])
-    if JOB_SEQ_COL in df_jobs.columns:
-        df_jobs[JOB_SEQ_COL] = _to_key(df_jobs[JOB_SEQ_COL])
-
+    if JOB_ID_COL in df_jobs.columns:  df_jobs[JOB_ID_COL]  = _to_key(df_jobs[JOB_ID_COL])
+    if JOB_SEQ_COL in df_jobs.columns: df_jobs[JOB_SEQ_COL] = _to_key(df_jobs[JOB_SEQ_COL])
 if df_jobinfo is not None and JOB_SEQ_COL in df_jobinfo.columns:
     df_jobinfo[JOB_SEQ_COL] = _to_key(df_jobinfo[JOB_SEQ_COL])
 
-PASS_RATE_COLS = {
-    2022: {"1차":"2022년 1차 합격률","2차":"2022년 2차 합격률","3차":"2022년 3차 합격률"},
-    2023: {"1차":"2023년 1차 합격률","2차":"2023년 2차 합격률","3차":"2023년 3차 합격률"},
-    2024: {"1차":"2024년 1차 합격률","2차":"2024년 2차 합격률","3차":"2024년 3차 합격률"},
-}
-APPL_COLS = {
-    2022: {"1차":"2022년 1차 응시자 수","2차":"2022년 2차 응시자수","3차":"2022년 3차 응시자수"},
-    2023: {"1차":"2023년 1차 응시자 수","2차":"2023년 2차 응시자 수","3차":"2023년 3차 응시자 수"},
-    2024: {"1차":"2024년 1차 응시자 수","2차":"2024년 2차 응시자 수","3차":"2024년 3차 응시자 수"},
-}
+# -------------------------------------------------
+# 취업률 이중 링 (그대로)
+# -------------------------------------------------
+def draw_dual_ring(ax, male_pct, female_pct, start_angle=90, clockwise=True,
+                   show_start_tick=True, inside_labels=False):
+    def _clamp(x):
+        try: x = float(x)
+        except Exception: x = 0.0
+        return max(0.0, min(100.0, x))
+    m = _clamp(male_pct); f = _clamp(female_pct)
+    r_outer, w_outer = 1.15, 0.22
+    r_inner, w_inner = 0.88, 0.22
+    c_male, c_female, c_track = "#2563eb", "#ef4444", "#e5e7eb"
+    def _arc(r, w, pct, color, z=1):
+        span = 360.0 * pct / 100.0
+        t1, t2 = (start_angle - span, start_angle) if clockwise else (start_angle, start_angle + span)
+        ax.add_patch(Wedge((0,0), r, t1, t2, width=w, facecolor=color, edgecolor="none", zorder=z))
+    _arc(r_outer,w_outer,100,c_track,0); _arc(r_inner,w_inner,100,c_track,0)
+    _arc(r_outer,w_outer,m,c_male,2);    _arc(r_inner,w_inner,f,c_female,2)
+    ax.add_patch(Circle((0,0), r_inner-0.22, facecolor="white", edgecolor="none", zorder=3))
+    if show_start_tick:
+        th = np.deg2rad(start_angle)
+        def _tick(r,w,color):
+            x0,y0=(r-w-0.01)*np.cos(th),(r-w-0.01)*np.sin(th)
+            x1,y1=(r+0.01)*np.cos(th),(r+0.01)*np.sin(th)
+            ax.plot([x0,x1],[y0,y1],color=color,linewidth=2.4,solid_capstyle="round",zorder=4)
+        _tick(r_outer,w_outer,c_male); _tick(r_inner,w_inner,c_female)
+    ax.set_xlim(-1.35,1.35); ax.set_ylim(-1.25,1.25); ax.set_aspect("equal"); ax.axis("off")
 
-num = lambda s: pd.to_numeric(s, errors="coerce")
+# -------------------------------------------------
+# 난이도 계산 (기존 로직 유지)
+# -------------------------------------------------
+SCORING = {"trust_floor":0.5,"trust_span":0.5,"bonus_prac":0.15,"bonus_intv":0.10,
+           "bonus_grade_max":0.20,"bonus_freq_max":0.10,"bonus_prof":0.20,"bonus_tech":0.10,"bonus_priv":0.00}
 
-def class_bonus(label:str)->float:
+def class_bonus(label):
     s=str(label)
     if "전문" in s: return SCORING["bonus_prof"]
     if "기술" in s: return SCORING["bonus_tech"]
     if "민간" in s: return SCORING["bonus_priv"]
     return 0.0
-
-def trust_weight(avg_app, all_avg_apps)->float:
+def trust_weight(avg_app, all_avg_apps):
     if pd.notna(avg_app) and all_avg_apps.notna().any():
         norm = np.log1p(avg_app) / np.nanmax(np.log1p(all_avg_apps))
         return SCORING["trust_floor"] + SCORING["trust_span"] * float(norm)
     return 1.0
-
-def grade_bonus(code)->float:
+def grade_bonus(code):
     c = num(code)
     if pd.isna(c): return 0.0
     return max(0.0, min(1.0, (500.0 - float(c)) / 400.0)) * SCORING["bonus_grade_max"]
-
-# “상시/수시” 등 텍스트 → 계산용 숫자(표시는 원문 그대로)
 def freq_to_num(x):
     if x is None: return np.nan
-    if isinstance(x, (int, float)) and not np.isnan(x): return float(x)
-    s = str(x).strip()
-    if s == "" or s.lower() == "nan": return np.nan
-    # 합리적 기본값: 상시=12회/년, 수시=6회/년, 연중=12회
-    if "상시" in s: return 12.0
+    if isinstance(x,(int,float)) and not np.isnan(x): return float(x)
+    s=str(x).strip()
+    if s=="" or s.lower()=="nan": return np.nan
+    if "상시" in s or "연중" in s: return 12.0
     if "수시" in s: return 6.0
-    if "연중" in s: return 12.0
-    m = re.search(r"(\d+)", s)
+    m=re.search(r"(\d+)", s)
     return float(m.group(1)) if m else np.nan
-
-def freq_bonus(v, all_freq_series)->float:
+def freq_bonus(v, all_freq_series):
     f = pd.to_numeric(v, errors="coerce")
     if pd.isna(f) or all_freq_series.notna().sum()==0: return 0.0
     fmin, fmax = float(np.nanmin(all_freq_series)), float(np.nanmax(all_freq_series))
-    if fmax == fmin: return 0.0
-    # 횟수 적을수록 어려움 보정(+)
+    if fmax==fmin: return 0.0
     return ((fmax - float(f)) / (fmax - fmin)) * SCORING["bonus_freq_max"]
-
 def qcut_1to5(s:pd.Series)->pd.Series:
-    s = s.replace([np.inf, -np.inf], np.nan)
-    valid = s.dropna()
-    if valid.nunique() >= 5:
+    s=s.replace([np.inf,-np.inf],np.nan); valid=s.dropna()
+    if valid.nunique()>=5:
         try:
-            bins = pd.qcut(valid, 5, labels=[1,2,3,4,5])
-            out = pd.Series(index=s.index, dtype="float")
-            out.loc[valid.index] = bins.astype(float)
-            return out
-        except Exception:
-            pass
-    mn = float(np.nanmin(valid)) if len(valid) else 0.0
-    mx = float(np.nanmax(valid)) if len(valid) else 1.0
+            bins=pd.qcut(valid,5,labels=[1,2,3,4,5]); out=pd.Series(index=s.index,dtype="float")
+            out.loc[valid.index]=bins.astype(float); return out
+        except Exception: pass
+    mn=float(np.nanmin(valid)) if len(valid) else 0.0
+    mx=float(np.nanmax(valid)) if len(valid) else 1.0
     def band(x):
         if pd.isna(x): return np.nan
-        if mx == mn:   return 3.0
-        r=(x-mn)/(mx-mn+1e-12)
-        return float(np.clip(np.floor(r*5)+1,1,5))
+        if mx==mn: return 3.0
+        r=(x-mn)/(mx-mn+1e-12); return float(np.clip(np.floor(r*5)+1,1,5))
     return s.apply(band)
 
-def fmt_int(x):
-    if pd.isna(x): return "-"
-    try: return f"{int(round(float(x))):,}"
-    except Exception: return "-"
-
-def badge(t):
-    return f"<span class='pill'>{t}</span>"
-
-def _num_in_text(x):
-    s = "" if x is None else str(x)
-    m = re.search(r"[-+]?\d*\.?\d+", s)  # 문자열 속 첫 숫자만 추출
-    return float(m.group(0)) if m else np.nan
-
-def plot_yearly_pass_rates(row: pd.Series, lic_name: str):
-    import matplotlib.patheffects as pe
-
-    years = [y for y in YEARS if all(PASS_RATE_COLS[y][ph] in df.columns for ph in PHASES)]
-    if not years:
-        return
-    x = np.arange(len(years))
-
-    fig, ax = plt.subplots(figsize=(5.4, 3.2), dpi=150)  # 가로폭 살짝 축소
-
-    legend_labels = []  # 범례에 값 요약 넣기
-
-    for ph, base_label in zip(PHASES, ["1차", "2차", "3차"]):
-        y = [pd.to_numeric(row.get(PASS_RATE_COLS[y][ph]), errors="coerce") for y in years]
-        if all(pd.isna(y)):
-            continue
-        yv = [float(v) if pd.notna(v) else np.nan for v in y]
-
-        line, = ax.plot(x, yv, marker="o", linewidth=2.0, markersize=5.0, label=base_label)
-
-        # 모든 점에 값표시(교차 오프셋 + 화이트 외곽선으로 겹침완화)
-        for i, val in enumerate(yv):
-            if np.isnan(val):
-                continue
-            offset = 8 if (i % 2 == 0) else -12  # 위/아래 번갈아
-            ax.annotate(
-                f"{val:.1f}%", (i, val),
-                textcoords="offset points", xytext=(0, offset), ha="center", va="bottom" if offset>0 else "top",
-                fontsize=9,
-                path_effects=[pe.Stroke(linewidth=3, foreground="white"), pe.Normal()]
-            )
-
-        # 범례용 요약 문자열 (예: '1차 22:40.1 · 23:37.9 · 24:32.8')
-        pairs = [f"{str(y)[2:]}:{(v if not np.isnan(v) else '-'):>}" for y, v in zip(years, [None if np.isnan(v) else round(v,1) for v in yv])]
-        legend_labels.append(f"{base_label}  " + " · ".join(str(p) for p in pairs))
-
-    ax.set_xticks(x, [str(y) for y in years])
-    ymax = max([v for ln in ax.get_lines() for v in ln.get_ydata() if np.isfinite(v)] + [0])
-    ax.set_ylim(0, min(100, ymax * 1.15 + 3))  # 위쪽 여백
-    ax.set_yticks(np.arange(0, 101, 20))
-    ax.set_ylabel("합격률(%)", labelpad=6)
-    ax.set_title(f"{lic_name} · 연도별 합격률 (1·2·3차)", pad=6)
-    ax.grid(True, which="major", linestyle="--", alpha=.35)
-
-    # 범례: 선 핸들 그대로 두고, 텍스트만 요약으로 교체
-    handles, _ = ax.get_legend_handles_labels()
-    leg = ax.legend(handles, legend_labels, title="구분 (yy:값)", ncol=1, loc="upper left", frameon=False)
-    if leg and leg.get_title():
-        leg.get_title().set_fontweight("bold")
-
-    for s in ["top", "right"]:
-        ax.spines[s].set_visible(False)
-
-    fig.tight_layout()
-    st.pyplot(fig, use_container_width=True)
-
-
-def render_detail_html(text: str) -> str:
-    """문단/불릿 자동 정리: 연속 빈줄 제거 + '-' '•' '·' 시작을 <ul><li>로."""
-    if not text:
-        return ""
-    lines = [ln.strip() for ln in str(text).splitlines()]
-    # 빈줄 압축
-    cleaned = []
-    for ln in lines:
-        if ln == "" and (not cleaned or cleaned[-1] == ""):
-            continue
-        cleaned.append(ln)
-
-    html, ul_open = [], False
-    def open_ul():
-        nonlocal ul_open
-        if not ul_open:
-            html.append("<ul style='margin:.25rem 0 .25rem 1.1rem;'>"); ul_open = True
-    def close_ul():
-        nonlocal ul_open
-        if ul_open:
-            html.append("</ul>"); ul_open = False
-
-    for ln in cleaned:
-        if re.match(r"^[-•·‣]\s*", ln):
-            open_ul()
-            item = re.sub(r"^[-•·‣]\s*", "", ln)
-            html.append(f"<li>{item}</li>")
-        elif ln:
-            close_ul()
-            html.append(f"<p style='margin:.2rem 0;'>{ln}</p>")
-    close_ul()
-    return "<div class='detail-box'>" + "".join(html) + "</div>"
-
-def _clear_job_selection_only():
-    # 페이지는 유지하고, 선택 상태만 리셋
-    for k in ("selected_license", "selected_job_seq", "selected_job_title"):
-        st.session_state.pop(k, None)
-
-
-
-# ─────────── 합격률/응시자 계산 ───────────
 for ph in PHASES:
     cols = [PASS_RATE_COLS[y][ph] for y in YEARS if PASS_RATE_COLS[y][ph] in df.columns]
     df[f"PASS_{ph}_AVG(22-24)"] = df[cols].apply(num).mean(axis=1, skipna=True) if cols else np.nan
-
 df["OVERALL_PASS(%)"] = df[[f"PASS_{ph}_AVG(22-24)" for ph in PHASES]].mean(axis=1, skipna=True)
-
 app_cols = [APPL_COLS[y][ph] for y in YEARS for ph in PHASES if APPL_COLS[y][ph] in df.columns]
 df["APPLICANTS_AVG"] = df[app_cols].apply(num).mean(axis=1, skipna=True) if app_cols else np.nan
 
-# 구조 플래그/텍스트
 def parse_structure(r):
-    t = str(r.get(STRUCT_COL, "") or "")
-    has_w = ("필기" in t) or (num(r.get(W_COL, 0)) > 0)
-    has_p = ("실기" in t) or (num(r.get(P_COL, 0)) > 0)
-    has_i = ("면접" in t) or (num(r.get(I_COL, 0)) > 0)
-    txt   = "+".join([x for x,b in (("필기",has_w),("실기",has_p),("면접",has_i)) if b])
-    return has_w, has_p, has_i, txt
-
+    t=str(r.get(STRUCT_COL,"") or "")
+    has_w=("필기" in t) or (num(r.get(W_COL,0))>0)
+    has_p=("실기" in t) or (num(r.get(P_COL,0))>0)
+    has_i=("면접" in t) or (num(r.get(I_COL,0))>0)
+    txt="+".join([x for x,b in (("필기",has_w),("실기",has_p),("면접",has_i)) if b])
+    return has_w,has_p,has_i,txt
 df[["HAS_W","HAS_P","HAS_I","STRUCT_TXT"]] = df.apply(parse_structure, axis=1, result_type="expand")
 
-# ─────────── 난이도(내부 계산) ───────────
-# 검정횟수: 표시용은 원문, 계산용은 숫자화
 freq_numeric = df[FREQ_COL].apply(freq_to_num) if FREQ_COL in df.columns else pd.Series([np.nan]*len(df))
 inv_overall  = (100.0 - df["OVERALL_PASS(%)"]) / 100.0
 trust_w      = df["APPLICANTS_AVG"].apply(lambda a: trust_weight(a, df["APPLICANTS_AVG"]))
@@ -422,149 +288,179 @@ score = (inv_overall.fillna(0)*trust_w
 df["DIFF_SCORE"]      = score
 df["DIFF_LEVEL(1-5)"] = qcut_1to5(df["DIFF_SCORE"])
 
-# 등급코드 후보(100단위)
-grade_nums     = pd.to_numeric(df[GRADE_COL], errors="coerce")
-grade_buckets  = [b for b in [100,200,300,400,500] if (grade_nums.round(-2)==b).any()]
+grade_nums    = pd.to_numeric(df[GRADE_COL], errors="coerce")
+grade_buckets = [b for b in [100,200,300,400,500] if (grade_nums.round(-2)==b).any()]
 
-# ───────── 사이드바 ─────────
+# -------------------------------------------------
+# 차트 (제목 폰트 축소 옵션 추가)
+# -------------------------------------------------
+BASE_CHART_W, BASE_CHART_H = (4.0, 2.2)
+MOBILE_CHART_W, MOBILE_CHART_H = (3.2, 1.9)
+LINE_W, MARKER_S  = 2.0, 5.0
+TITLE_FSIZE_DESK  = 17
+TITLE_FSIZE_MOB   = 14
+TICK_FSIZE_DESK   = 10
+TICK_FSIZE_MOB    = 9
+LABEL_FSIZE_DESK  = 11
+LABEL_FSIZE_MOB   = 10
+
+def plot_yearly_pass_rates(row: pd.Series, lic_name: str, is_mobile: bool, title_scale: float = 1.0):
+    years = [y for y in YEARS if all(PASS_RATE_COLS[y][ph] in df.columns for ph in PHASES)]
+    if not years: return
+    x = np.arange(len(years))
+    w,h = (MOBILE_CHART_W, MOBILE_CHART_H) if is_mobile else (BASE_CHART_W, BASE_CHART_H)
+    tfs  = (TITLE_FSIZE_MOB if is_mobile else TITLE_FSIZE_DESK) * float(title_scale)
+    tkfs = TICK_FSIZE_MOB if is_mobile else TICK_FSIZE_DESK
+    lbfs = LABEL_FSIZE_MOB if is_mobile else LABEL_FSIZE_DESK
+
+    fig, ax = plt.subplots(figsize=(w, h), dpi=160)
+    for ph, label in zip(PHASES, ["1차","2차","3차"]):
+        y = [pd.to_numeric(row.get(PASS_RATE_COLS[yy][ph]), errors="coerce") for yy in years]
+        yv = [float(v) if pd.notna(v) else np.nan for v in y]
+        ax.plot(x, yv, marker="o", linewidth=LINE_W, markersize=MARKER_S,
+                label=label, solid_capstyle="round")
+
+    ax.set_xticks(x); ax.set_xticklabels([str(y) for y in years])
+    ax.set_ylim(0, 100); ax.set_yticks(np.arange(0, 101, 20))
+    ax.tick_params(axis="both", labelsize=tkfs)  # ← fontsize 오류 해결 지점
+    ax.set_ylabel("합격률(%)", fontsize=lbfs, labelpad=(2 if is_mobile else 4))
+    ax.set_title(f"{lic_name} · 연도별 합격률 (1·2·3차)",
+                 pad=(4 if is_mobile else 6), fontsize=tfs, fontweight="bold")
+    ax.legend(ncol=3, loc="upper left", bbox_to_anchor=(0.02, 1.02),
+              frameon=False, title=None, fontsize=(9 if is_mobile else 10),
+              handlelength=2.0, columnspacing=1.0)
+    ax.grid(True, which="major", linestyle="--", alpha=.35)
+    hide_spines(ax)
+    fig.tight_layout()
+    st.pyplot(fig, use_container_width=True)
+
+   # ── 그래프 아래 요약: 깔끔한 그리드(모바일 가독성 ↑) ─────────────────────
+    def _vals(part: str):
+        out = []
+        for y in years:
+            v = pd.to_numeric(row.get(PASS_RATE_COLS[y][part]), errors="coerce")
+            out.append(v)
+        return out
+
+    rows = [("1차", _vals("1차")), ("2차", _vals("2차"))]
+    # 3차 값이 하나라도 있으면 표시
+    has_3rd = any(pd.notna(v) for v in _vals("3차"))
+    if has_3rd:
+        rows.append(("3차", _vals("3차")))
+
+    html = [
+        "<div style='margin-top:4px; font-size:12px; color:#334155;'>",
+        "<div style='display:grid; grid-template-columns:auto 1fr; gap:6px 10px; align-items:center;'>"
+    ]
+    for label, vals in rows:
+        html.append(f"<div style='font-weight:700;'>{label}</div>")
+        pieces = []
+        for y, v in zip(years, vals):
+            txt = f"{v:.1f}%" if pd.notna(v) else "-"
+            pieces.append(
+                f"<span style='opacity:.85'>{y}년</span> "
+                f"<span style='font-variant-numeric:tabular-nums'>{txt}</span>"
+            )
+        html.append("<div>" + " · ".join(pieces) + "</div>")
+    html.append("</div></div>")
+
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+# -------------------------------------------------
+# 사이드바: 필터 + QR
+# -------------------------------------------------
 with st.sidebar:
     st.header("전공 필터")
-    use_major     = st.toggle("전공으로 필터", value=False)
-    selected_ids  = None
-
-    # 이전에 선택한 학과 기억용
+    use_major = st.toggle("전공으로 필터", value=False)
+    selected_ids = None
     if "last_selected_major" not in st.session_state:
         st.session_state["last_selected_major"] = None
-
     if use_major:
         if df_major is None:
             st.error("전공 엑셀을 찾지 못했습니다.")
         else:
-            major_name_col, major_id_col = "학과명", "자격증ID"
+            major_name_col, major_id_col = "학과명","자격증ID"
             majors_all = sorted(df_major[major_name_col].astype(str).unique().tolist())
-            qmaj       = st.text_input("전공 검색", value="")
-            majors_view= [m for m in majors_all if qmaj.strip()=="" or qmaj.lower() in m.lower()]
-             # 학과 선택
+            qmaj = st.text_input("전공 검색", value="")
+            majors_view=[m for m in majors_all if qmaj.strip()=="" or qmaj.lower() in m.lower()]
             sel_major = st.selectbox("학과명", ["(선택)"]+majors_view, index=0, key="major_select")
-
-            # 학과가 바뀌면 관련 선택 상태 초기화
             if sel_major != st.session_state["last_selected_major"]:
-                _clear_related_selections()
+                for k in ("selected_license","selected_job_seq","selected_job_title"):
+                    st.session_state.pop(k, None)
                 st.session_state["last_selected_major"] = sel_major
-                # if hasattr(st, "rerun"): st.rerun()
             if sel_major != "(선택)":
-                selected_ids = (
-                    df_major.loc[df_major[major_name_col].astype(str)==sel_major, major_id_col]
-                           .astype(str).unique().tolist()
-                )
-
-                # 선택한 전공의 취업률 표시 + 도넛 차트
-                rate_cols = ["취업률_전체", "취업률_남", "취업률_여"]
+                selected_ids = (df_major.loc[df_major[major_name_col].astype(str)==sel_major, major_id_col]
+                                      .astype(str).unique().tolist())
+                rate_cols = ["취업률_전체","취업률_남","취업률_여"]
                 if all(c in df_major.columns for c in rate_cols):
-                    _row = (
-                        df_major.loc[df_major[major_name_col].astype(str)==sel_major, rate_cols]
-                                .apply(pd.to_numeric, errors="coerce")
-                                .dropna(how="all")
-                    )
+                    _row = (df_major.loc[df_major[major_name_col].astype(str)==sel_major, rate_cols]
+                                     .apply(pd.to_numeric, errors="coerce").dropna(how="all"))
                     if not _row.empty:
                         r_all = float(_row.iloc[0]["취업률_전체"]) if pd.notna(_row.iloc[0]["취업률_전체"]) else np.nan
                         r_m   = float(_row.iloc[0]["취업률_남"])   if pd.notna(_row.iloc[0]["취업률_남"])   else np.nan
                         r_f   = float(_row.iloc[0]["취업률_여"])   if pd.notna(_row.iloc[0]["취업률_여"])   else np.nan
-
                         with st.container(border=True):
-                            st.caption("전공 취업률")
-                            st.markdown(
-                                f"**취업률(전체)** : {r_all:.1f}%  \n"
-                            )
-
-                            # 남·여 이중 링 게이지 (남=바깥 파랑, 여=안쪽 빨강)
+                            st.caption("전공 취업률"); st.markdown(f"**취업률(전체)** : {r_all:.1f}%  \n")
                             if pd.notna(r_m) or pd.notna(r_f):
-                                fig, ax = plt.subplots(figsize=(4.2, 4.2), dpi=160)  # ← 3.2 → 4.2, dpi 추가
-                                draw_dual_ring(ax, male_pct=r_m, female_pct=r_f,
-                                            start_angle=90, clockwise=True, show_start_tick=True, inside_labels=False)
-                                fig.tight_layout(pad=0.1)
-                                st.pyplot(fig, use_container_width=True)
-
+                                fig, ax = plt.subplots(figsize=(4.2, 4.2), dpi=160)
+                                draw_dual_ring(ax, male_pct=r_m, female_pct=r_f, start_angle=90, clockwise=True)
+                                fig.tight_layout(pad=0.1); st.pyplot(fig, use_container_width=True)
                                 st.markdown(
                                     f"""
                                     <div style="margin-top:-4px; line-height:1.6;">
                                     <div style="display:flex; align-items:center; gap:.5rem;">
-                                        <span style="width:10px; height:10px; border-radius:50%; background:#2563eb; display:inline-block;"></span>
-                                        <span style="color:#2563eb; font-weight:700;">남:</span>
-                                        <span style="font-weight:700; color:#334155;">{r_m:.1f}%</span>
-                                    </div>
+                                      <span style="width:10px;height:10px;border-radius:50%;background:#2563eb;display:inline-block;"></span>
+                                      <span style="color:#2563eb;font-weight:700;">남:</span>
+                                      <span style="font-weight:700;color:#334155;">{r_m:.1f}%</span></div>
                                     <div style="display:flex; align-items:center; gap:.5rem;">
-                                        <span style="width:10px; height:10px; border-radius:50%; background:#ef4444; display:inline-block;"></span>
-                                        <span style="color:#ef4444; font-weight:700;">여:</span>
-                                        <span style="font-weight:700; color:#334155;">{r_f:.1f}%</span>
+                                      <span style="width:10px;height:10px;border-radius:50%;background:#ef4444;display:inline-block;"></span>
+                                      <span style="color:#ef4444;font-weight:700;">여:</span>
+                                      <span style="font-weight:700;color:#334155;">{r_f:.1f}%</span></div>
                                     </div>
-                                    </div>
-                                    """,
-                                    unsafe_allow_html=True
-                                )
-        st.divider()
+                                    """, unsafe_allow_html=True)
 
+    st.divider()
     st.header("검색 / 필터")
     q = st.text_input("자격증명 검색", value="")
-
-    # 변경
     cls_all = sorted(df[CLS_COL].dropna().astype(str).unique().tolist())
-    # 국가기술/전문/민간만 보여줌, 없으면 전체 옵션 그대로 사용
-    whitelist = [o for o in cls_all if any(k in o for k in ("국가기술", "국가전문", "국가민간"))]
+    whitelist = [o for o in cls_all if any(k in o for k in ("국가기술","국가전문","국가민간"))]
     cls_options = whitelist if whitelist else cls_all
-
-    sel_cls = st.selectbox(
-        "자격증 분류",
-        options=["(전체)"] + cls_options,
-        index=0,
-        key="cls_single",
-    )
-
-
-    # '국가기술자격' 포함 시에만 등급코드 필터
+    sel_cls = st.selectbox("자격증 분류", options=["(전체)"]+cls_options, index=0, key="cls_single")
     show_grade_filter = ("국가기술" in sel_cls)
     if show_grade_filter:
-        sel_buckets = st.multiselect(
-            "등급코드(100단위)",
-            options=grade_buckets or [100,200,300,400,500],
-            format_func=lambda x: GRADE_LABELS.get(x, str(x)),
-            default=grade_buckets or [100,200,300,400,500]
-        )
+        sel_buckets = st.multiselect("등급코드(100단위)",
+                        options=grade_buckets or [100,200,300,400,500],
+                        format_func=lambda x: GRADE_LABELS.get(x, str(x)),
+                        default=grade_buckets or [100,200,300,400,500])
     else:
-        sel_buckets = None
-        st.caption("등급코드는 ‘국가기술자격’ 선택 시 활성화됩니다.")
+        sel_buckets = None; st.caption("등급코드는 ‘국가기술자격’ 선택 시 활성화됩니다.")
+    c1,c2,c3 = st.columns(3)
+    want_w = c1.toggle("필기", value=False); want_p = c2.toggle("실기", value=False); want_i = c3.toggle("면접", value=False)
+    sel_lv  = st.multiselect("난이도 등급(1~5)", options=[1,2,3,4,5], default=[1,2,3,4,5])
 
-    c1, c2, c3 = st.columns(3)
-    want_w = c1.toggle("필기", value=False)
-    want_p = c2.toggle("실기", value=False)
-    want_i = c3.toggle("면접", value=False)
+    st.divider()
+    # QR: 항상 사이드바에만. 상세가 열려있을 때는 다운로드 숨김.
+    render_qr_home(show_download = (st.session_state.get("selected_license") is None))
 
-    sel_lv    = st.multiselect("난이도 등급(1~5)", options=[1,2,3,4,5], default=[1,2,3,4,5])
-
-
-# ─────────── 필터 적용 ───────────
+# -------------------------------------------------
+# 필터 적용 + 결과 목록
+# -------------------------------------------------
 page_size = 6
 f = df.copy()
-if selected_ids:
-    f = f[f[ID_COL].astype(str).isin([str(x) for x in selected_ids])]
-if q:
-    f = f[f[NAME_COL].astype(str).str.contains(q, case=False, na=False)]
-if sel_cls != "(전체)":
-    f = f[f[CLS_COL].astype(str) == sel_cls]
-if sel_buckets:
-    f = f[pd.to_numeric(f[GRADE_COL], errors="coerce").round(-2).isin(sel_buckets)]
+if selected_ids: f = f[f[ID_COL].astype(str).isin([str(x) for x in selected_ids])]
+if q: f = f[f[NAME_COL].astype(str).str.contains(q, case=False, na=False)]
+if sel_cls != "(전체)": f = f[f[CLS_COL].astype(str) == sel_cls]
+if sel_buckets: f = f[pd.to_numeric(f[GRADE_COL], errors="coerce").round(-2).isin(sel_buckets)]
 if want_w: f = f[f["HAS_W"]==True]
 if want_p: f = f[f["HAS_P"]==True]
 if want_i: f = f[f["HAS_I"]==True]
 f = f[f["DIFF_LEVEL(1-5)"].isin(sel_lv)]
 f = f.sort_values(["DIFF_SCORE","OVERALL_PASS(%)"], ascending=[False, True])
 
-# ─────────── 페이지네이션(하단) ───────────
 total = len(f)
 max_pages = max(1, int(np.ceil(total / page_size)))
 if "page" not in st.session_state: st.session_state.page = 1
-if st.session_state.page > max_pages: st.session_state.page = 1
-if st.session_state.page < 1: st.session_state.page = 1
+st.session_state.page = int(np.clip(st.session_state.page, 1, max_pages))
 page = st.session_state.page
 start, end = (page-1)*page_size, (page-1)*page_size + page_size
 page_df = f.iloc[start:end]
@@ -572,34 +468,23 @@ page_df = f.iloc[start:end]
 st.markdown(f"#### 결과: {total:,}건 (페이지 {page}/{max_pages})")
 st.caption("정렬: 난이도 점수 내림차순 → 합격률 오름차순")
 
-# ─────────── 카드 렌더링 ───────────
+ncol = 1 if IS_MOBILE else 3
+
 def license_card(row):
     title, rid = str(row[NAME_COL]), str(row[ID_COL])
-    cls        = str(row.get(CLS_COL, ""))
-    grade      = row.get(GRADE_COL, "")
-    freq_disp  = row.get(FREQ_COL, "")       # 표시는 원문
-    struct     = row.get("STRUCT_TXT", "")
-    diff_lv    = row.get("DIFF_LEVEL(1-5)", np.nan)
-    diff_sc    = row.get("DIFF_SCORE", np.nan)
-    apps       = row.get("APPLICANTS_AVG", np.nan)
+    cls = str(row.get(CLS_COL, "")); grade = row.get(GRADE_COL, "")
+    freq_disp = row.get(FREQ_COL, ""); struct = row.get("STRUCT_TXT", "")
+    diff_lv = row.get("DIFF_LEVEL(1-5)", np.nan); diff_sc = row.get("DIFF_SCORE", np.nan)
+    apps = row.get("APPLICANTS_AVG", np.nan)
 
     with st.container(border=True):
         st.markdown(f"##### {title}  <small style='color:#868e96'>[{rid}]</small>", unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class='pill-row'>{badge(f"분류: {cls}")}{badge(f"등급코드: {grade}")}</div>
+        <div class='pill-row'>{badge(f"검정횟수: {freq_disp}")}{badge(f"구조: {struct}")}</div>
+        """, unsafe_allow_html=True)
 
-            # ⬇ 두 줄 배지
-        st.markdown(
-            f"""
-            <div class='pill-row'>
-                {badge(f"분류: {cls}")}{badge(f"등급코드: {grade}")}
-            </div>
-            <div class='pill-row'>
-                {badge(f"검정횟수: {freq_disp}")}{badge(f"구조: {struct}")}
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-
-        c1, c2, c3 = st.columns(3)
+        c1,c2,c3 = st.columns(3)
         with c1: st.metric("난이도 등급", f"{int(diff_lv) if pd.notna(diff_lv) else '-'} / 5",
                            help=(f"점수 {diff_sc:.3f}" if pd.notna(diff_sc) else None))
         with c2: st.metric("평균 응시자수", fmt_int(apps))
@@ -607,29 +492,22 @@ def license_card(row):
             ov = row.get("OVERALL_PASS(%)", np.nan)
             st.metric("전체 합격률(평균)", f"{ov:.1f}%" if pd.notna(ov) else "-")
 
-        p1, p2, p3 = st.columns(3)
-        with p1:
-            v = row.get("PASS_1차_AVG(22-24)", np.nan)
-            st.metric("1차 합격률(3년평균)", f"{v:.1f}%" if pd.notna(v) else "-")
-        with p2:
-            v = row.get("PASS_2차_AVG(22-24)", np.nan)
-            st.metric("2차 합격률(3년평균)", f"{v:.1f}%" if pd.notna(v) else "-")
-        with p3:
-            v = row.get("PASS_3차_AVG(22-24)", np.nan)
-            st.metric("3차 합격률(3년평균)", f"{v:.1f}%" if pd.notna(v) else "-")
+        p1,p2,p3 = st.columns(3)
+        with p1: v=row.get("PASS_1차_AVG(22-24)", np.nan); st.metric("1차 합격률(3년평균)", f"{v:.1f}%" if pd.notna(v) else "-")
+        with p2: v=row.get("PASS_2차_AVG(22-24)", np.nan); st.metric("2차 합격률(3년평균)", f"{v:.1f}%" if pd.notna(v) else "-")
+        with p3: v=row.get("PASS_3차_AVG(22-24)", np.nan); st.metric("3차 합격률(3년평균)", f"{v:.1f}%" if pd.notna(v) else "-")
 
-        # 관련 직무 보기
         if (df_jobs is not None) and (JOB_ID_COL in df_jobs.columns):
             if st.button("관련 직무 보기", key=f"jobbtn_{rid}", use_container_width=True):
                 st.session_state["selected_license"] = rid
-                # 직무 상세 선택은 초기화
                 st.session_state.pop("selected_job_seq", None)
+                st.session_state.pop("selected_job_title", None)
+                st.session_state["_scroll_to_top"] = True  # 상세로 이동 시도할 때도 맨 위로
 
 rows = list(page_df.to_dict(orient="records"))
 if not rows:
     st.info("조건에 맞는 결과가 없습니다. 필터를 조정해 보세요.")
 else:
-    ncol = 3
     for i in range(0, len(rows), ncol):
         cols = st.columns(ncol)
         for j in range(ncol):
@@ -637,16 +515,17 @@ else:
                 with cols[j]:
                     license_card(rows[i+j])
 
-# ─────────── 관련 직무(카드) & 상세 패널 — 페이지 하단 ───────────
+# -------------------------------------------------
+# 하단: 선택된 자격증 상세(연도별 그래프 + 직무 + 직업정보)
+# -------------------------------------------------
 sel_license = st.session_state.get("selected_license")
 
-    # (A) 선택 자격증 연도별 합격률 3라인 그래프
 if sel_license is not None:
     lic_row = df[df[ID_COL].astype(str) == str(sel_license)]
     if not lic_row.empty:
-        plot_yearly_pass_rates(lic_row.iloc[0], lic_row.iloc[0][NAME_COL])
+        # 제목 폰트 절반으로 축소 (요청사항)
+        plot_yearly_pass_rates(lic_row.iloc[0], lic_row.iloc[0][NAME_COL], IS_MOBILE, title_scale=0.5)
 
-    # (B) 관련 직무 카드
 if df_jobs is not None and (JOB_ID_COL in df_jobs.columns) and sel_license:
     jobs = df_jobs[df_jobs[JOB_ID_COL] == str(sel_license).strip()].copy()
     st.subheader("관련 직무")
@@ -654,18 +533,16 @@ if df_jobs is not None and (JOB_ID_COL in df_jobs.columns) and sel_license:
         st.info("연결된 직무 데이터가 없습니다.")
     else:
         if "학과명" in jobs.columns:
-            jobs = (
-                jobs.assign(학과명=jobs["학과명"].astype(str).str.strip())
-                    .groupby([JOB_SEQ_COL, "직업명"], as_index=False)["학과명"]
-                    .agg(lambda s: ", ".join(pd.Series(s).dropna().unique()))
-            )
+            jobs = (jobs.assign(학과명=jobs["학과명"].astype(str).str.strip())
+                         .groupby([JOB_SEQ_COL,"직업명"], as_index=False)["학과명"]
+                         .agg(lambda s: ", ".join(pd.Series(s).dropna().unique())))
         ncol = 2
         job_rows = list(jobs.to_dict(orient="records"))
         for i in range(0, len(job_rows), ncol):
             cols = st.columns(ncol)
             for j in range(ncol):
-                if i + j >= len(job_rows): break
-                jr = job_rows[i + j]
+                if i+j >= len(job_rows): break
+                jr = job_rows[i+j]
                 seq   = str(jr.get(JOB_SEQ_COL, "")).strip()
                 title = str(jr.get("직업명", "(직업명 미상)"))
                 major = str(jr.get("학과명", "")).strip()
@@ -676,136 +553,131 @@ if df_jobs is not None and (JOB_ID_COL in df_jobs.columns) and sel_license:
                         if st.button("상세 정보", key=f"jobinfo_btn__{sel_license}__{seq}", use_container_width=True):
                             st.session_state["selected_job_seq"]   = seq
                             st.session_state["selected_job_title"] = title
+                            st.session_state["_scroll_to_top"] = True
 
-    # (C) 상세 패널
-    sel_job = st.session_state.get("selected_job_seq")
-    st.divider()
-    st.subheader("직업 상세 정보")
-
-
+sel_job = st.session_state.get("selected_job_seq")
+if sel_license is not None:
+    st.divider(); st.subheader("직업 상세 정보")
     if (sel_job is None) or (df_jobinfo is None) or (JOB_SEQ_COL not in (df_jobinfo.columns if df_jobinfo is not None else [])):
         st.info("상세 보기를 선택하면 이곳에 표시됩니다.")
     else:
         detail = df_jobinfo[df_jobinfo[JOB_SEQ_COL] == str(sel_job).strip()]
         if detail.empty:
-            st.warning("직업정보 데이터가 없습니다(키 불일치). 아래 '디버그'에서 키를 확인해 보세요.")
+            st.warning("직업정보 데이터가 없습니다(키 불일치).")
         else:
             r = detail.iloc[0].astype(str).str.strip().to_dict()
-            title = st.session_state.get("selected_job_title") or r.get("직업명", "")
-
+            title = st.session_state.get("selected_job_title") or r.get("직업명","")
             with st.container(border=True):
-                st.markdown(
-                    f"### {title}  <small style='color:#868e96'>[{str(sel_job).strip()}]</small>",
-                    unsafe_allow_html=True
-                )
-
+                st.markdown(f"### {title}  <small style='color:#868e96'>[{str(sel_job).strip()}]</small>", unsafe_allow_html=True)
                 score_keys = ["보상","고용안정","발전가능성","근무여건","직업전문성","고용평등"]
-                cols = st.columns(3); k = 0
+                cols = st.columns(3); k=0
                 for sk in score_keys:
-                    val = r.get(sk, "")
-                    if val and val.lower() not in ["nan", "none"]:
-                        with cols[k % 3]:
-                            st.metric(sk, val)
-                        k += 1
+                    val = r.get(sk,"")
+                    if val and val.lower() not in ["nan","none"]:
+                        with cols[k%3]: st.metric(sk, val); k+=1
 
-                # 레이더차트(그대로 유지)
-                radar_keys   = ["보상","고용안정","발전가능성","근무여건","직업전문성","고용평등"]
-                radar_labels = radar_keys[:]
-                radar_vals   = [_num_in_text(r.get(k, "")) for k in radar_keys]
-
+                radar_keys = ["보상","고용안정","발전가능성","근무여건","직업전문성","고용평등"]
+                radar_vals = [_num_in_text(r.get(k,"")) for k in radar_keys]
                 if any(pd.notna(v) for v in radar_vals):
                     vals = [0.0 if pd.isna(v) else float(v) for v in radar_vals]
                     angles = np.linspace(0, 2*np.pi, len(vals), endpoint=False)
-
-                    _, mid, _ = st.columns([1, 2, 1])
+                    _, mid, _ = st.columns([1,2,1])
                     with mid:
-                        fig = plt.figure(figsize=(5.2, 5.2))
+                        fig = plt.figure(figsize=(5.2,5.2))
                         ax = plt.subplot(111, polar=True)
-                        ax.set_theta_offset(np.pi / 2)
-                        ax.set_theta_direction(-1)
+                        ax.set_theta_offset(np.pi/2); ax.set_theta_direction(-1)
                         angles_c = np.concatenate([angles, angles[:1]])
                         vals_c   = np.concatenate([vals,   vals[:1]])
-                        ax.plot(angles_c, vals_c, linewidth=2.4)
-                        ax.fill(angles_c, vals_c, alpha=0.12)
-                        ax.set_thetagrids(np.degrees(angles), radar_labels)
-                        ax.set_ylim(0, 100)
-                        ax.set_rgrids([20, 40, 60, 80, 100], angle=90, fontsize=9)
+                        ax.plot(angles_c, vals_c, linewidth=2.4); ax.fill(angles_c, vals_c, alpha=0.12)
+                        ax.set_thetagrids(np.degrees(angles), radar_keys)
+                        ax.set_ylim(0,100); ax.set_rgrids([20,40,60,80,100], angle=90, fontsize=9)
                         ax.set_title("직업 지표 레이더", pad=12)
-                        ax.grid(True, linestyle="--", alpha=0.35)
-                        ax.spines["polar"].set_linewidth(0.9)
+                        ax.grid(True, linestyle="--", alpha=0.35); ax.spines["polar"].set_linewidth(0.9)
                         for ang, val in zip(angles, vals):
-                            ax.annotate(f"{val:.0f}", (ang, val),
-                                        textcoords="offset points", xytext=(0, 6), ha="center")
-                        fig.tight_layout()
-                        st.pyplot(fig, use_container_width=True)
+                            ax.annotate(f"{val:.0f}", (ang, val), textcoords="offset points", xytext=(0,6), ha="center")
+                        fig.tight_layout(); st.pyplot(fig, use_container_width=True)
 
                 st.divider()
+                def render_detail_html(text: str) -> str:
+                    if not text: return ""
+                    lines=[ln.strip() for ln in str(text).splitlines()]
+                    cleaned=[]; 
+                    for ln in lines:
+                        if ln=="" and (not cleaned or cleaned[-1]==""): continue
+                        cleaned.append(ln)
+                    html,ul=False,False
+                    out=[]; ul_open=False
+                    def open_ul():
+                        nonlocal ul_open
+                        if not ul_open: out.append("<ul style='margin:.25rem 0 .25rem 1.1rem;'>"); ul_open=True
+                    def close_ul():
+                        nonlocal ul_open
+                        if ul_open: out.append("</ul>"); ul_open=False
+                    for ln in cleaned:
+                        if re.match(r"^[-•·‣]\\s*", ln):
+                            open_ul(); item=re.sub(r"^[-•·‣]\\s*", "", ln); out.append(f"<li>{item}</li>")
+                        elif ln:
+                            close_ul(); out.append(f"<p style='margin:.2rem 0;'>{ln}</p>")
+                    close_ul(); return "<div class='detail-box'>"+"".join(out)+"</div>"
 
-                sections = [
-                    ("직업전망요약","직업전망요약"),
-                    ("취업방법","취업방법"),
-                    ("준비과정","준비과정"),
-                    ("교육과정","교육과정"),
-                    ("적성","적성"),
-                    ("고용형태","고용형태"),
-                    ("고용분류","고용분류"),
-                    ("표준분류","표준분류"),
-                    ("직무구분","직무구분"),
-                    ("초임","초임"),
-                    ("유사직업명","유사직업명"),
-                ]
-                for key, label in sections:
-                    val = (r.get(key) or "").strip()
-                    if not val or val.lower() in ["nan", "none"]:
-                        continue
-                    st.markdown(f"**{label}**")
-                    # 👉 다크모드에서도 읽히도록 글자색을 강제한다.
-                    st.markdown(render_detail_html(val), unsafe_allow_html=True)
+                sections=[("직업전망요약","직업전망요약"),("취업방법","취업방법"),("준비과정","준비과정"),
+                          ("교육과정","교육과정"),("적성","적성"),("고용형태","고용형태"),
+                          ("고용분류","고용분류"),("표준분류","표준분류"),("직무구분","직무구분"),
+                          ("초임","초임"),("유사직업명","유사직업명")]
+                for key,label in sections:
+                    val=(r.get(key) or "").strip()
+                    if not val or val.lower() in ["nan","none"]: continue
+                    st.markdown(f"**{label}**"); st.markdown(render_detail_html(val), unsafe_allow_html=True)
 
-                c1, c2 = st.columns([1,1])
+                c1,c2 = st.columns([1,1])
                 with c1:
                     if st.button("상세 보기 닫기", key="close_jobinfo", use_container_width=True):
                         st.session_state.pop("selected_job_seq", None)
                         st.session_state.pop("selected_job_title", None)
-                        if hasattr(st, "rerun"): st.rerun()
+                        st.session_state["_scroll_to_top"] = True
+                        st.experimental_rerun()
                 with c2:
                     if st.button("관련 직무 선택 해제", key="clear_jobs", use_container_width=True):
                         st.session_state.pop("selected_license", None)
                         st.session_state.pop("selected_job_seq", None)
                         st.session_state.pop("selected_job_title", None)
-                        if hasattr(st, "rerun"): st.rerun()
+                        st.session_state["_scroll_to_top"] = True
+                        st.experimental_rerun()
 
+# -------------------------------------------------
+# 페이지네이션 + 스크롤-투-탑
+# -------------------------------------------------
+def _sync_page_from_input():
+    st.session_state.page = int(st.session_state.page_input)
+    for k in ("selected_license","selected_job_seq","selected_job_title"):
+        st.session_state.pop(k, None)
+    st.session_state["_scroll_to_top"] = True
 
-# ─────────── 하단 페이지 컨트롤 ───────────
-if "page" not in st.session_state:
-    st.session_state.page = 1
-st.session_state.page = int(np.clip(st.session_state.page, 1, max_pages))
+def _prev_page():
+    st.session_state.page = max(1, st.session_state.page - 1)
+    for k in ("selected_license","selected_job_seq","selected_job_title"):
+        st.session_state.pop(k, None)
+    st.session_state["_scroll_to_top"] = True
+
+def _next_page():
+    st.session_state.page = min(max_pages, st.session_state.page + 1)
+    for k in ("selected_license","selected_job_seq","selected_job_title"):
+        st.session_state.pop(k, None)
+    st.session_state["_scroll_to_top"] = True
 
 st.session_state.setdefault("page_input", st.session_state.page)
 st.session_state.page_input = st.session_state.page
 
-def _sync_page_from_input():
-    st.session_state.page = int(st.session_state.page_input)
-    _clear_job_selection_only()   # ← 입력으로 페이지 바꾸면 초기화
-
-def _prev_page():
-    st.session_state.page = max(1, st.session_state.page - 1)
-    _clear_job_selection_only()   # ← 이전 버튼 클릭 시 초기화
-
-def _next_page():
-    st.session_state.page = min(max_pages, st.session_state.page + 1)
-    _clear_job_selection_only()   # ← 다음 버튼 클릭 시 초기화
-
-c_prev, c_info, c_next = st.columns([1, 2, 1])
-
+c_prev, c_info, c_next = st.columns([1,2,1])
 with c_prev:
     st.button("◀ 이전", use_container_width=True,
               disabled=(st.session_state.page <= 1), on_click=_prev_page)
-
 with c_info:
     st.number_input("페이지", min_value=1, max_value=max_pages, step=1,
                     key="page_input", on_change=_sync_page_from_input)
-
 with c_next:
     st.button("다음 ▶", use_container_width=True,
               disabled=(st.session_state.page >= max_pages), on_click=_next_page)
+
+# 버튼 클릭 후 스크롤-투-탑 실행
+_emit_scroll_to_top_if_needed()
