@@ -234,52 +234,71 @@ with st.sidebar:
                         with st.container(border=True):
                             st.caption("전공 취업률")
                             st.markdown(f"**취업률(전체)** : {r_all:.1f}%  \n")
+                            # ▼▼ 이 블록 전체 교체 ▼▼
                             if pd.notna(r_m) or pd.notna(r_f):
-                                fig, ax = plt.subplots(figsize=(4.2, 4.2), dpi=160)
-                                # 이중 링
-                                def draw_dual_ring(ax, male_pct, female_pct,
-                                                   start_angle=90, clockwise=True,
-                                                   show_start_tick=True):
+                                # 사이드바 폭을 넘지 않도록 작은 기본 크기 + 컨테이너 폭에 맞춰 리사이즈
+                                size_in = 2.3 if IS_MOBILE else 2.6  # inch
+                                fig, ax = plt.subplots(
+                                    figsize=(size_in, size_in),
+                                    dpi=220,
+                                    facecolor="white",
+                                    constrained_layout=False,
+                                )
+                                ax.set_facecolor("white")
+
+                                # 이중 링 게이지
+                                def _draw_dual_ring(ax, male_pct, female_pct, start_angle=90, clockwise=True):
                                     def _clamp(x):
-                                        try: x=float(x)
-                                        except Exception: x=0.0
-                                        return max(0.0,min(100.0,x))
-                                    m=_clamp(male_pct); f=_clamp(female_pct)
-                                    r_outer,w_outer = 1.15,0.22
-                                    r_inner,w_inner = 0.88,0.22
-                                    c_male,c_female,c_track = "#2563eb","#ef4444","#e5e7eb"
-                                    def _arc(r,w,pct,color,z=1):
-                                        span = 360.0*pct/100.0
-                                        t1,t2 = (start_angle-span,start_angle) if clockwise else (start_angle,start_angle+span)
-                                        ax.add_patch(Wedge((0,0),r,t1,t2,width=w,facecolor=color,edgecolor="none",zorder=z))
-                                    _arc(r_outer,w_outer,100,c_track,0); _arc(r_inner,w_inner,100,c_track,0)
-                                    _arc(r_outer,w_outer,m,c_male,2);    _arc(r_inner,w_inner,f,c_female,2)
+                                        try: x = float(x)
+                                        except Exception: x = 0.0
+                                        return max(0.0, min(100.0, x))
+                                    m = _clamp(male_pct); f = _clamp(female_pct)
+
+                                    r_outer, w_outer = 1.10, 0.22
+                                    r_inner, w_inner = 0.83, 0.22
+                                    c_male, c_female, c_track = "#2563eb", "#ef4444", "#e5e7eb"
+
+                                    def _arc(r, w, pct, color, z=1):
+                                        span = 360.0 * pct / 100.0
+                                        t1, t2 = (start_angle - span, start_angle) if clockwise else (start_angle, start_angle + span)
+                                        ax.add_patch(Wedge((0,0), r, t1, t2, width=w, facecolor=color, edgecolor="none", zorder=z))
+
+                                    # 트랙 + 값
+                                    _arc(r_outer, w_outer, 100, c_track, 0); _arc(r_inner, w_inner, 100, c_track, 0)
+                                    _arc(r_outer, w_outer, m, c_male, 2);    _arc(r_inner, w_inner, f, c_female, 2)
+
+                                    # 가운데 구멍
                                     ax.add_patch(Circle((0,0), r_inner-0.22, facecolor="white", edgecolor="none", zorder=3))
-                                    if show_start_tick:
-                                        th=np.deg2rad(start_angle)
-                                        def _tick(r,w,color):
-                                            x0,y0=(r-w-0.01)*np.cos(th),(r-w-0.01)*np.sin(th)
-                                            x1,y1=(r+0.01)*np.cos(th),(r+0.01)*np.sin(th)
-                                            ax.plot([x0,x1],[y0,y1],color=color,linewidth=2.4,solid_capstyle="round",zorder=4)
-                                        _tick(r_outer,w_outer,c_male); _tick(r_inner,w_inner,c_female)
-                                    ax.set_xlim(-1.35,1.35); ax.set_ylim(-1.25,1.25); ax.set_aspect("equal"); ax.axis("off")
-                                draw_dual_ring(ax, r_m, r_f)
-                                fig.tight_layout(pad=0.1); st.pyplot(fig, use_container_width=True)
+
+                                    # 여백/클리핑 정리 (사이드바 테두리 안에 딱 맞게)
+                                    ax.set_xlim(-1.25, 1.25); ax.set_ylim(-1.15, 1.15)
+                                    ax.set_aspect("equal"); ax.axis("off")
+
+                                _draw_dual_ring(ax, r_m, r_f, start_angle=90, clockwise=True)
+                                # 바깥 여백 제거
+                                fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+                                # 컨테이너 폭에 맞춰 출력 → 테두리 넘침 방지
+                                st.pyplot(fig, use_container_width=True)
+
                                 st.markdown(
                                     f"""
                                     <div style="margin-top:-4px; line-height:1.6;">
-                                      <div style="display:flex; align-items:center; gap:.5rem;">
+                                    <div style="display:flex; align-items:center; gap:.5rem;">
                                         <span style="width:10px;height:10px;border-radius:50%;background:#2563eb;display:inline-block;"></span>
                                         <span style="color:#2563eb;font-weight:700;">남:</span>
                                         <span style="font-weight:700;color:#334155;">{r_m:.1f}%</span>
-                                      </div>
-                                      <div style="display:flex; align-items:center; gap:.5rem;">
+                                    </div>
+                                    <div style="display:flex; align-items:center; gap:.5rem;">
                                         <span style="width:10px;height:10px;border-radius:50%;background:#ef4444;display:inline-block;"></span>
                                         <span style="color:#ef4444;font-weight:700;">여:</span>
                                         <span style="font-weight:700;color:#334155;">{r_f:.1f}%</span>
-                                      </div>
                                     </div>
-                                    """, unsafe_allow_html=True)
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
+                            # ▲▲ 여기까지 교체 ▲▲
 
     st.divider()
     st.header("검색 / 필터")
@@ -424,9 +443,12 @@ def plot_yearly_pass_rates(row: pd.Series, lic_name: str):
     ax.grid(True, which="major", linestyle="--", alpha=.35)
     hide_spines(ax)
     fig.tight_layout(pad=0.4)
-    st.pyplot(fig, use_container_width=False)  # figsize 그대로 쓰기
+    _, mid, _ = st.columns([1, 2, 1])
+    
+    with mid:
+        st.pyplot(fig, use_container_width=True)
 
-    # 아래 텍스트 3줄 레이아웃
+    # 아래 텍스트 3줄
     def _row_txt(part: str):
         chunks = []
         for y in years:
@@ -434,16 +456,16 @@ def plot_yearly_pass_rates(row: pd.Series, lic_name: str):
             chunks.append(f"{y}년 {part} 합격률 : {v:.1f}%" if pd.notna(v) else f"{y}년 {part} 합격률 : -")
         return " · ".join(chunks)
 
-    st.markdown(
-        """
-        <div style="font-size:12px; line-height:1.55; color:#334155; margin:6px 0 0;">
+    centered_html = """
+        <div style="font-size:12px; line-height:1.55; color:#334155; margin:6px 0 0; text-align:center;">
             <div style="margin-bottom:2px;">{r1}</div>
             <div style="margin-bottom:2px;">{r2}</div>
             <div>{r3}</div>
         </div>
-        """.format(r1=_row_txt("1차"), r2=_row_txt("2차"), r3=_row_txt("3차")),
-        unsafe_allow_html=True
-    )
+    """.format(r1=_row_txt("1차"), r2=_row_txt("2차"), r3=_row_txt("3차"))
+
+    with mid:
+        st.markdown(centered_html, unsafe_allow_html=True)
 
 # -------------------------------------------------
 # 필터 적용 + 결과 목록
@@ -524,10 +546,14 @@ else:
 # -------------------------------------------------
 sel_license = st.session_state.get("selected_license")
 
+# ───────── 합격률 섹션 ─────────
 if sel_license is not None:
     lic_row = df[df[ID_COL].astype(str) == str(sel_license)]
     if not lic_row.empty:
-        plot_yearly_pass_rates(lic_row.iloc[0], lic_row.iloc[0][NAME_COL])
+        st.subheader("합격률")  # ← '관련 직무'와 동일한 형태의 왼쪽 섹션 제목
+        with st.container(border=True):  # ← 그래프+설명 텍스트를 한 번에 감싸는 테두리
+            plot_yearly_pass_rates(lic_row.iloc[0], lic_row.iloc[0][NAME_COL])
+
 
 if df_jobs is not None and (JOB_ID_COL in df_jobs.columns) and sel_license:
     mask = df_jobs[JOB_ID_COL].astype(str).str.strip() == str(sel_license).strip()
