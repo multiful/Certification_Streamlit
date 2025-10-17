@@ -530,7 +530,8 @@ if sel_license is not None:
         plot_yearly_pass_rates(lic_row.iloc[0], lic_row.iloc[0][NAME_COL])
 
 if df_jobs is not None and (JOB_ID_COL in df_jobs.columns) and sel_license:
-    jobs = df_jobs[df[JOB_ID_COL] == str(sel_license).strip()].copy()
+    mask = df_jobs[JOB_ID_COL].astype(str).str.strip() == str(sel_license).strip()
+    jobs = df_jobs.loc[mask].copy()
     st.subheader("관련 직무")
     if jobs.empty:
         st.info("연결된 직무 데이터가 없습니다.")
