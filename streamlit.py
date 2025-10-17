@@ -323,11 +323,9 @@ with st.sidebar:
                                 _draw_dual_ring(ax, r_m, r_f)
                                 fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
-                                # 🔥 PNG로 렌더해서 사이드바 폭에 100%로 맞춤
-                                buf = io.BytesIO()
-                                fig.savefig(buf, format="png", dpi=220, bbox_inches="tight", pad_inches=0)
-                                buf.seek(0)
-                                st.image(buf, use_container_width=True)
+                                # 사이드바 컨테이너 폭에 꽉 차도록 바로 렌더(경고/크래시 없음)
+                                fig.subplots_adjust(left=0, right=1, top=1, bottom=0)  # 여백 제거
+                                st.pyplot(fig, use_container_width=True)
                                 plt.close(fig)
 
                                 st.markdown(
