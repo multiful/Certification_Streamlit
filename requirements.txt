@@ -8,3 +8,4 @@ matplotlib>=3.0
 folium
 streamlit_folium
 altair
+qrcode[pil]
