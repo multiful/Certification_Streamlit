@@ -42,6 +42,31 @@ def apply_pretty_style():
         "grid.alpha": 0.35,
     })
 
+def _force_light_theme_on_mobile():
+    # 모바일에서만 theme=light 쿼리 부착 + 로컬스토리지 테마 저장
+    st.markdown("""
+    <script>
+    (function(){
+      try{
+        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        if(!isMobile) return;
+        // 1) URL 쿼리 파라미터 보정
+        const url = new URL(window.location.href);
+        if(url.searchParams.get("theme") !== "light"){
+          url.searchParams.set("theme","light");
+          window.history.replaceState({}, "", url.toString());
+        }
+        // 2) 로컬스토리지에도 저장(스트림릿이 참고)
+        const key = "streamlitTheme";
+        const cur = JSON.parse(localStorage.getItem(key) || "{}");
+        const next = Object.assign({}, cur, {base: "light"});
+        localStorage.setItem(key, JSON.stringify(next));
+      }catch(e){}
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+
+
 use_korean_font()
 apply_pretty_style()
 
@@ -174,6 +199,7 @@ num = lambda s: pd.to_numeric(s, errors="coerce")
 # 모바일 감지(쿼리만 사용; 강제 토글은 제거)
 # -------------------------------------------------
 IS_MOBILE = (str(get_query_params().get("m","0")) == "1")
+_force_light_theme_on_mobile()
 
 # -------------------------------------------------
 # 사이드바 (필터 + QR)
@@ -301,7 +327,7 @@ with st.sidebar:
                                 buf = io.BytesIO()
                                 fig.savefig(buf, format="png", dpi=220, bbox_inches="tight", pad_inches=0)
                                 buf.seek(0)
-                                st.image(buf, use_column_width=True)   # ← 테두리 안에 꽉 차게
+                                st.image(buf, use_container_width=True)
                                 plt.close(fig)
 
                                 st.markdown(
@@ -684,18 +710,24 @@ def _sync_page_from_input():
     for k in ("selected_license","selected_job_seq","selected_job_title"):
         st.session_state.pop(k, None)
     st.session_state["_scroll_to_top"] = True
+    _emit_scroll_to_top_if_needed()   # ← 버튼 렌더 직후에도 1회 실행
+
 
 def _prev_page():
     st.session_state.page = max(1, st.session_state.page - 1)
     for k in ("selected_license","selected_job_seq","selected_job_title"):
         st.session_state.pop(k, None)
     st.session_state["_scroll_to_top"] = True
+    _emit_scroll_to_top_if_needed()   # ← 버튼 렌더 직후에도 1회 실행
+
 
 def _next_page():
     st.session_state.page = min(max_pages, st.session_state.page + 1)
     for k in ("selected_license","selected_job_seq","selected_job_title"):
         st.session_state.pop(k, None)
     st.session_state["_scroll_to_top"] = True
+    _emit_scroll_to_top_if_needed()   # ← 버튼 렌더 직후에도 1회 실행
+
 
 st.session_state.setdefault("page_input", st.session_state.page)
 st.session_state.page_input = st.session_state.page
