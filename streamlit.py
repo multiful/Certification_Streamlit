@@ -118,10 +118,32 @@ st.markdown("""
   white-space:pre-wrap; line-height:1.7;
   background:#f8fbff; border:1px solid #e9ecef; border-radius:10px;
   padding:12px; margin:6px 0 16px 0;
-  color:#111827;               /* ← 다크모드에서도 선명하게 */
+  color:#111827;
+}
+/* ⬇ 배지(라벨) 공통 스타일 — 모바일/다크모드에서도 선명하게 보이도록 */
+.pill{
+  display:inline-block;
+  padding:4px 10px;
+  border-radius:999px;
+  background:rgba(248,249,250,.95);
+  border:1px solid #dee2e6;
+  font-size:11px;
+  color:#111827;   /* 다크모드에서도 글자색 유지 */
+  margin-right:6px;
+  margin-bottom:6px;
+}
+.pill-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  margin-bottom:2px;
+}
+@media (max-width:480px){
+  .pill{ font-size:12px; padding:4px 12px; }  /* 모바일 가독성 */
 }
 </style>
 """, unsafe_allow_html=True)
+
 
 
 
@@ -262,12 +284,18 @@ def fmt_int(x):
     except Exception: return "-"
 
 def badge(t):
-    return f"<span style='padding:2px 8px;border-radius:999px;background:#f8f9fa;border:1px solid #dee2e6;font-size:11px;margin-right:6px;'>{t}</span>"
+    return f"<span class='pill'>{t}</span>"
 
 def _num_in_text(x):
     s = "" if x is None else str(x)
     m = re.search(r"[-+]?\d*\.?\d+", s)  # 문자열 속 첫 숫자만 추출
     return float(m.group(0)) if m else np.nan
+
+def _clear_job_selection_only():
+    # 페이지는 유지하고, 선택 상태만 리셋
+    for k in ("selected_license", "selected_job_seq", "selected_job_title"):
+        st.session_state.pop(k, None)
+
 
 
 # ─────────── 합격률/응시자 계산 ───────────
@@ -469,11 +497,17 @@ def license_card(row):
 
     with st.container(border=True):
         st.markdown(f"##### {title}  <small style='color:#868e96'>[{rid}]</small>", unsafe_allow_html=True)
+
+            # ⬇ 두 줄 배지
         st.markdown(
-            badge(f"분류: {cls}") +
-            badge(f"등급코드: {grade}") +
-            badge(f"검정횟수: {freq_disp}") +
-            badge(f"구조: {struct}"),
+            f"""
+            <div class='pill-row'>
+                {badge(f"분류: {cls}")}{badge(f"등급코드: {grade}")}
+            </div>
+            <div class='pill-row'>
+                {badge(f"검정횟수: {freq_disp}")}{badge(f"구조: {struct}")}
+            </div>
+            """,
             unsafe_allow_html=True
         )
 
@@ -696,20 +730,35 @@ with top_area:
 
 
 # ─────────── 하단 페이지 컨트롤 ───────────
+if "page" not in st.session_state:
+    st.session_state.page = 1
+st.session_state.page = int(np.clip(st.session_state.page, 1, max_pages))
+
+st.session_state.setdefault("page_input", st.session_state.page)
+st.session_state.page_input = st.session_state.page
+
+def _sync_page_from_input():
+    st.session_state.page = int(st.session_state.page_input)
+    _clear_job_selection_only()   # ← 입력으로 페이지 바꾸면 초기화
+
+def _prev_page():
+    st.session_state.page = max(1, st.session_state.page - 1)
+    _clear_job_selection_only()   # ← 이전 버튼 클릭 시 초기화
+
+def _next_page():
+    st.session_state.page = min(max_pages, st.session_state.page + 1)
+    _clear_job_selection_only()   # ← 다음 버튼 클릭 시 초기화
+
 c_prev, c_info, c_next = st.columns([1, 2, 1])
-def _safe_rerun():
-    if hasattr(st, "rerun"):
-        st.rerun()
-    elif hasattr(st, "experimental_rerun"):
-        st.experimental_rerun()
 
 with c_prev:
-    if st.button("◀ 이전", use_container_width=True, disabled=(page <= 1), key="prev_btn"):
-        st.session_state.page = max(1, page - 1); _safe_rerun()
+    st.button("◀ 이전", use_container_width=True,
+              disabled=(st.session_state.page <= 1), on_click=_prev_page)
+
 with c_info:
-    new_page = st.number_input("페이지", min_value=1, max_value=max_pages, value=page, step=1, key="page_num")
-    if new_page != page:
-        st.session_state.page = int(new_page); _safe_rerun()
+    st.number_input("페이지", min_value=1, max_value=max_pages, step=1,
+                    key="page_input", on_change=_sync_page_from_input)
+
 with c_next:
-    if st.button("다음 ▶", use_container_width=True, disabled=(page >= max_pages), key="next_btn"):
-        st.session_state.page = min(max_pages, page + 1); _safe_rerun()
+    st.button("다음 ▶", use_container_width=True,
+              disabled=(st.session_state.page >= max_pages), on_click=_next_page)
