@@ -125,6 +125,44 @@ def _st_image_compat(img_bytes_or_array):
     except TypeError:
         st.image(img_bytes_or_array, use_column_width=True)      # 구버전
 
+def render_employ_donut_svg(male_pct, female_pct) -> str:
+    """사이드바 전용: 반응형(SVG) 이중 링 게이지. 컨테이너 폭 100%."""
+    def clamp(x):
+        try: x = float(x)
+        except Exception: x = 0.0
+        return max(0.0, min(100.0, x))
+    m = clamp(male_pct); f = clamp(female_pct)
+
+    # 스타일(라이트/다크 테마 모두 대비)
+    track = "#e5e7eb"; male = "#2563eb"; female = "#ef4444"
+
+    # SVG 원형 링 파라미터
+    # 바깥 링(남), 안쪽 링(여)
+    cx, cy = 60, 60
+    r_outer, w_outer = 48, 8
+    r_inner, w_inner = 36, 8
+    C_outer = 2 * np.pi * r_outer
+    C_inner = 2 * np.pi * r_inner
+    dash_m = f"{C_outer * m/100:.3f} {C_outer:.3f}"
+    dash_f = f"{C_inner * f/100:.3f} {C_inner:.3f}"
+
+    return f"""
+<div style="width:100%;display:block;">
+  <svg viewBox="0 0 120 120" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block;">
+    <g transform="rotate(-90 {cx} {cy})">
+      <!-- 트랙 -->
+      <circle cx="{cx}" cy="{cy}" r="{r_outer}" fill="none" stroke="{track}" stroke-width="{w_outer}" />
+      <circle cx="{cx}" cy="{cy}" r="{r_inner}" fill="none" stroke="{track}" stroke-width="{w_inner}" />
+      <!-- 값(남/여) -->
+      <circle cx="{cx}" cy="{cy}" r="{r_outer}" fill="none" stroke="{male}" stroke-width="{w_outer}"
+              stroke-linecap="round" stroke-dasharray="{dash_m}" />
+      <circle cx="{cx}" cy="{cy}" r="{r_inner}" fill="none" stroke="{female}" stroke-width="{w_inner}"
+              stroke-linecap="round" stroke-dasharray="{dash_f}" />
+    </g>
+  </svg>
+</div>
+"""
+
 
 # 상세 텍스트 예쁘게 포매팅
 def render_detail_html(text: str) -> str:
@@ -295,74 +333,35 @@ with st.sidebar:
                         r_all = float(_row.iloc[0]["취업률_전체"]) if pd.notna(_row.iloc[0]["취업률_전체"]) else np.nan
                         r_m   = float(_row.iloc[0]["취업률_남"])   if pd.notna(_row.iloc[0]["취업률_남"])   else np.nan
                         r_f   = float(_row.iloc[0]["취업률_여"])   if pd.notna(_row.iloc[0]["취업률_여"])   else np.nan
+                        # ▼▼ 기존 도넛 그리던 곳만 교체 ▼▼
                         with st.container(border=True):
                             st.caption("전공 취업률")
                             st.markdown(f"**취업률(전체)** : {r_all:.1f}%  \n")
-                            # ▼▼ 도넛 그리는 부분만 교체 ▼▼
+
                             if pd.notna(r_m) or pd.notna(r_f):
-                                # PC는 기존 pyplot 유지 / 모바일만 PNG로 만들어 100% 폭으로 넣기
-                                size_in = 2.1 if IS_MOBILE else 2.6  # inch
-                                fig, ax = plt.subplots(figsize=(size_in, size_in), dpi=220, facecolor="white")
-                                ax.set_facecolor("white")
+                                # Matplotlib 대신 SVG로 반응형 렌더 (모바일/클라우드 동일하게 꽉 차게 표시)
+                                st.markdown(render_employ_donut_svg(r_m, r_f), unsafe_allow_html=True)
 
-                                def _clamp(x):
-                                    try: x = float(x)
-                                    except Exception: x = 0.0
-                                    return max(0.0, min(100.0, x))
-                                m, f = _clamp(r_m), _clamp(r_f)
-
-                                # 살짝 크게 그려도 잘리지 않도록 여백/한계 재조정
-                                r_outer, w_outer = 1.18, 0.24
-                                r_inner, w_inner = 0.92, 0.24
-                                c_male, c_female, c_track = "#2563eb", "#ef4444", "#e5e7eb"
-
-                                def _arc(r, w, pct, color, z=1, start_angle=90, clockwise=True):
-                                    span = 360.0 * pct / 100.0
-                                    t1, t2 = (start_angle - span, start_angle) if clockwise else (start_angle, start_angle + span)
-                                    ax.add_patch(Wedge((0,0), r, t1, t2, width=w, facecolor=color, edgecolor="none", zorder=z))
-
-                                _arc(r_outer, w_outer, 100, c_track, 0)
-                                _arc(r_inner, w_inner, 100, c_track, 0)
-                                _arc(r_outer, w_outer, m, c_male, 2)
-                                _arc(r_inner, w_inner, f, c_female, 2)
-
-                                ax.add_patch(Circle((0,0), r_inner - 0.26, facecolor="white", edgecolor="none", zorder=3))
-                                ax.set_xlim(-1.26, 1.26); ax.set_ylim(-1.18, 1.18)
-                                ax.set_aspect("equal"); ax.axis("off")
-                                fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
-
-                                if IS_MOBILE:
-                                    # 모바일: PNG → <img style=width:100%> (버전 호환 헬퍼 사용)
-                                    import io, base64
-                                    buf = io.BytesIO()
-                                    fig.savefig(buf, format="png", dpi=220, bbox_inches="tight", pad_inches=0)
-                                    buf.seek(0)
-                                    _st_image_compat(buf)   # ← 여기 한 줄로 끝 (클라우드/로컬 둘 다 안전)
-                                    plt.close(fig)
-                                else:
-                                    # PC: 기존처럼 반응형으로 잘 맞음
-                                    st.pyplot(fig, use_container_width=True)
-                                    plt.close(fig)
-
-                                # 색 라벨
+                                # 색 라벨은 그대로
                                 st.markdown(
                                     f"""
-                                    <div style="margin-top:-4px; line-height:1.6;">
+                                    <div style="margin-top:-6px; line-height:1.6;">
                                     <div style="display:flex; align-items:center; gap:.5rem;">
                                         <span style="width:10px;height:10px;border-radius:50%;background:#2563eb;display:inline-block;"></span>
                                         <span style="color:#2563eb;font-weight:700;">남:</span>
-                                        <span style="font-weight:700;color:#334155;">{m:.1f}%</span>
+                                        <span style="font-weight:700;color:#334155;">{r_m:.1f}%</span>
                                     </div>
                                     <div style="display:flex; align-items:center; gap:.5rem;">
                                         <span style="width:10px;height:10px;border-radius:50%;background:#ef4444;display:inline-block;"></span>
                                         <span style="color:#ef4444;font-weight:700;">여:</span>
-                                        <span style="font-weight:700;color:#334155;">{f:.1f}%</span>
+                                        <span style="font-weight:700;color:#334155;">{r_f:.1f}%</span>
                                     </div>
                                     </div>
                                     """,
                                     unsafe_allow_html=True
                                 )
-                            # ▲▲ 교체 끝 ▲▲
+                        # ▲▲ 교체 끝 ▲▲
+
 
 
     st.divider()
