@@ -118,6 +118,13 @@ def _emit_scroll_to_top_if_needed():
             unsafe_allow_html=True
         )
 
+# Streamlit 버전별 st.image 인자 호환: new(use_container_width) / old(use_column_width)
+def _st_image_compat(img_bytes_or_array):
+    try:
+        st.image(img_bytes_or_array, use_container_width=True)   # 최신 버전
+    except TypeError:
+        st.image(img_bytes_or_array, use_column_width=True)      # 구버전
+
 
 # 상세 텍스트 예쁘게 포매팅
 def render_detail_html(text: str) -> str:
@@ -291,61 +298,71 @@ with st.sidebar:
                         with st.container(border=True):
                             st.caption("전공 취업률")
                             st.markdown(f"**취업률(전체)** : {r_all:.1f}%  \n")
-                            # ▼▼ 이 블록 전체 교체 ▼▼
+                            # ▼▼ 도넛 그리는 부분만 교체 ▼▼
                             if pd.notna(r_m) or pd.notna(r_f):
-                                size_in = 2.1 if IS_MOBILE else 2.6  # inch (모바일은 더 작게)
+                                # PC는 기존 pyplot 유지 / 모바일만 PNG로 만들어 100% 폭으로 넣기
+                                size_in = 2.1 if IS_MOBILE else 2.6  # inch
                                 fig, ax = plt.subplots(figsize=(size_in, size_in), dpi=220, facecolor="white")
                                 ax.set_facecolor("white")
 
-                                def _draw_dual_ring(ax, male_pct, female_pct, start_angle=90, clockwise=True):
-                                    def _clamp(x):
-                                        try: x = float(x)
-                                        except Exception: x = 0.0
-                                        return max(0.0, min(100.0, x))
-                                    m, f = _clamp(male_pct), _clamp(female_pct)
+                                def _clamp(x):
+                                    try: x = float(x)
+                                    except Exception: x = 0.0
+                                    return max(0.0, min(100.0, x))
+                                m, f = _clamp(r_m), _clamp(r_f)
 
-                                    r_outer, w_outer = 1.10, 0.22
-                                    r_inner, w_inner = 0.83, 0.22
-                                    c_male, c_female, c_track = "#2563eb", "#ef4444", "#e5e7eb"
+                                # 살짝 크게 그려도 잘리지 않도록 여백/한계 재조정
+                                r_outer, w_outer = 1.18, 0.24
+                                r_inner, w_inner = 0.92, 0.24
+                                c_male, c_female, c_track = "#2563eb", "#ef4444", "#e5e7eb"
 
-                                    def _arc(r, w, pct, color, z=1):
-                                        span = 360.0 * pct / 100.0
-                                        t1, t2 = (start_angle - span, start_angle) if clockwise else (start_angle, start_angle + span)
-                                        ax.add_patch(Wedge((0,0), r, t1, t2, width=w, facecolor=color, edgecolor="none", zorder=z))
+                                def _arc(r, w, pct, color, z=1, start_angle=90, clockwise=True):
+                                    span = 360.0 * pct / 100.0
+                                    t1, t2 = (start_angle - span, start_angle) if clockwise else (start_angle, start_angle + span)
+                                    ax.add_patch(Wedge((0,0), r, t1, t2, width=w, facecolor=color, edgecolor="none", zorder=z))
 
-                                    _arc(r_outer,w_outer,100,c_track,0); _arc(r_inner,w_inner,100,c_track,0)
-                                    _arc(r_outer,w_outer,m,c_male,2);    _arc(r_inner,w_inner,f,c_female,2)
+                                _arc(r_outer, w_outer, 100, c_track, 0)
+                                _arc(r_inner, w_inner, 100, c_track, 0)
+                                _arc(r_outer, w_outer, m, c_male, 2)
+                                _arc(r_inner, w_inner, f, c_female, 2)
 
-                                    ax.add_patch(Circle((0,0), r_inner-0.22, facecolor="white", edgecolor="none", zorder=3))
-                                    ax.set_xlim(-1.25, 1.25); ax.set_ylim(-1.15, 1.15)
-                                    ax.set_aspect("equal"); ax.axis("off")
-
-                                _draw_dual_ring(ax, r_m, r_f)
+                                ax.add_patch(Circle((0,0), r_inner - 0.26, facecolor="white", edgecolor="none", zorder=3))
+                                ax.set_xlim(-1.26, 1.26); ax.set_ylim(-1.18, 1.18)
+                                ax.set_aspect("equal"); ax.axis("off")
                                 fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
-                                # 사이드바 컨테이너 폭에 꽉 차도록 바로 렌더(경고/크래시 없음)
-                                fig.subplots_adjust(left=0, right=1, top=1, bottom=0)  # 여백 제거
-                                st.pyplot(fig, use_container_width=True)
-                                plt.close(fig)
+                                if IS_MOBILE:
+                                    # 모바일: PNG → <img style=width:100%> (버전 호환 헬퍼 사용)
+                                    import io, base64
+                                    buf = io.BytesIO()
+                                    fig.savefig(buf, format="png", dpi=220, bbox_inches="tight", pad_inches=0)
+                                    buf.seek(0)
+                                    _st_image_compat(buf)   # ← 여기 한 줄로 끝 (클라우드/로컬 둘 다 안전)
+                                    plt.close(fig)
+                                else:
+                                    # PC: 기존처럼 반응형으로 잘 맞음
+                                    st.pyplot(fig, use_container_width=True)
+                                    plt.close(fig)
 
+                                # 색 라벨
                                 st.markdown(
                                     f"""
                                     <div style="margin-top:-4px; line-height:1.6;">
                                     <div style="display:flex; align-items:center; gap:.5rem;">
                                         <span style="width:10px;height:10px;border-radius:50%;background:#2563eb;display:inline-block;"></span>
                                         <span style="color:#2563eb;font-weight:700;">남:</span>
-                                        <span style="font-weight:700;color:#334155;">{r_m:.1f}%</span>
+                                        <span style="font-weight:700;color:#334155;">{m:.1f}%</span>
                                     </div>
                                     <div style="display:flex; align-items:center; gap:.5rem;">
                                         <span style="width:10px;height:10px;border-radius:50%;background:#ef4444;display:inline-block;"></span>
                                         <span style="color:#ef4444;font-weight:700;">여:</span>
-                                        <span style="font-weight:700;color:#334155;">{r_f:.1f}%</span>
+                                        <span style="font-weight:700;color:#334155;">{f:.1f}%</span>
                                     </div>
                                     </div>
                                     """,
                                     unsafe_allow_html=True
                                 )
-                            # ▲▲ 여기까지 교체 ▲▲
+                            # ▲▲ 교체 끝 ▲▲
 
 
     st.divider()
