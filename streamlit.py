@@ -43,29 +43,49 @@ def apply_pretty_style():
     })
 
 def _force_light_theme_on_mobile():
-    # 모바일에서만 theme=light 쿼리 부착 + 로컬스토리지 테마 저장
+    # 모바일에서 라이트 테마를 확실히 강제: 로컬스토리지 + URL + 1회 새로고침
     st.markdown("""
     <script>
     (function(){
       try{
         const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
         if(!isMobile) return;
-        // 1) URL 쿼리 파라미터 보정
+
         const url = new URL(window.location.href);
-        if(url.searchParams.get("theme") !== "light"){
-          url.searchParams.set("theme","light");
-          window.history.replaceState({}, "", url.toString());
+        const THEME_QS = (url.searchParams.get("theme") || "").toLowerCase();
+        const LS_KEY = "streamlitTheme";
+        const desired = { base: "light" };
+        let cur = {};
+        try { cur = JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch(e) {}
+
+        const needLs = (cur.base || "").toLowerCase() !== "light";
+        const needQs = THEME_QS !== "light";
+
+        if (needLs || needQs) {
+          // 1) LS 저장
+          localStorage.setItem(LS_KEY, JSON.stringify(Object.assign({}, cur, desired)));
+          // 2) URL 보정
+          if (needQs) {
+            url.searchParams.set("theme","light");
+          }
+          // 3) 무한 새로고침 방지용 1회 플래그
+          if (!sessionStorage.getItem("forcedLightOnce")) {
+            sessionStorage.setItem("forcedLightOnce","1");
+            window.location.replace(url.toString());
+            return;
+          }
         }
-        // 2) 로컬스토리지에도 저장(스트림릿이 참고)
-        const key = "streamlitTheme";
-        const cur = JSON.parse(localStorage.getItem(key) || "{}");
-        const next = Object.assign({}, cur, {base: "light"});
-        localStorage.setItem(key, JSON.stringify(next));
       }catch(e){}
     })();
     </script>
     """, unsafe_allow_html=True)
 
+
+# 모바일/브라우저의 시스템 다크 선호를 무시하고 라이트로 고정
+st.markdown(
+    "<style>:root{ color-scheme: light; }</style>",
+    unsafe_allow_html=True
+)
 
 use_korean_font()
 apply_pretty_style()
@@ -117,6 +137,15 @@ def _emit_scroll_to_top_if_needed():
             """,
             unsafe_allow_html=True
         )
+
+def _safe_rerun():
+    # Streamlit 1.25~1.35 : experimental_rerun
+    # Streamlit 1.36+     : rerun
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:
+        st.experimental_rerun()
+
 
 # Streamlit 버전별 st.image 인자 호환: new(use_container_width) / old(use_column_width)
 def _st_image_compat(img_bytes_or_array):
@@ -707,14 +736,14 @@ if sel_license is not None:
                         st.session_state.pop("selected_job_seq", None)
                         st.session_state.pop("selected_job_title", None)
                         st.session_state["_scroll_to_top"] = True
-                        st.experimental_rerun()
+                        _safe_rerun()
                 with c2:
                     if st.button("관련 직무 선택 해제", key="clear_jobs", use_container_width=True):
                         st.session_state.pop("selected_license", None)
                         st.session_state.pop("selected_job_seq", None)
                         st.session_state.pop("selected_job_title", None)
                         st.session_state["_scroll_to_top"] = True
-                        st.experimental_rerun()
+                        _safe_rerun()
 
 # -------------------------------------------------
 # 페이지네이션 + 스크롤-투-탑
