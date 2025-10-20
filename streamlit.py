@@ -580,7 +580,7 @@ page = st.session_state.page
 start, end = (page-1)*page_size, (page-1)*page_size + page_size
 page_df = f.iloc[start:end]
 
-mode_txt = " (합격률 없음 전용 모드)" if show_only_no_pass else ""
+mode_txt = " (합격률 없는 자격증)" if show_only_no_pass else ""
 st.markdown(f"#### 결과: {total:,}건 (페이지 {page}/{max_pages}){mode_txt}")
 if not show_only_no_pass:
     st.caption("정렬: 난이도 점수 내림차순 → 합격률 오름차순")
@@ -780,3 +780,4 @@ with c_next:
               disabled=(st.session_state.page >= max_pages), on_click=_next_page)
 
 _emit_scroll_to_top_if_needed()
+
