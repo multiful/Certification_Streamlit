@@ -124,9 +124,13 @@ def _safe_rerun():
     if hasattr(st, "rerun"): st.rerun()
     else: st.experimental_rerun()
 
-def _st_image_compat(img_bytes_or_array):
-    try: st.image(img_bytes_or_array, use_container_width=True)
-    except TypeError: st.image(img_bytes_or_array, use_column_width=True)
+def _clear_selection():
+    # 상세 패널/선택된 카드 해제 + 페이지 1로
+    for k in ("selected_license", "selected_job_seq", "selected_job_title"):
+        st.session_state.pop(k, None)
+    st.session_state.page = 1
+    st.session_state["_scroll_to_top"] = True
+
 
 def render_employ_donut_svg(male_pct, female_pct) -> str:
     def clamp(x):
@@ -398,11 +402,14 @@ with st.sidebar:
 
     st.divider()
     st.header("검색 / 필터")
-    q = st.text_input("자격증명 검색", value="")
+    q = st.text_input("자격증명 검색", value="", key="q", on_change=_clear_selection)
     cls_all = sorted(df[CLS_COL].dropna().astype(str).unique().tolist())
     whitelist = [o for o in cls_all if any(k in o for k in ("국가기술","국가전문","국가민간"))]
     cls_options = whitelist if whitelist else cls_all
-    sel_cls = st.selectbox("자격증 분류", options=["(전체)"]+cls_options, index=0, key="cls_single")
+    sel_cls = st.selectbox(
+        "자격증 분류", ["(전체)"]+cls_options, index=0,
+        key="cls_single", on_change=_clear_selection
+    )
 
     # 등급코드 필터(국가기술일 때만)
     grade_nums = pd.to_numeric(df[GRADE_COL], errors="coerce")
@@ -413,7 +420,8 @@ with st.sidebar:
             "등급코드(100단위)",
             options=grade_buckets or [100,200,300,400,500],
             format_func=lambda x: GRADE_LABELS.get(x, str(x)),
-            default=grade_buckets or [100,200,300,400,500]
+            default=grade_buckets or [100,200,300,400,500],
+            key="sel_buckets", on_change=_clear_selection
         )
     else:
         sel_buckets = None
@@ -421,12 +429,15 @@ with st.sidebar:
 
     # 시험구성
     c1,c2,c3 = st.columns(3)
-    want_w = c1.toggle("필기", value=False)
-    want_p = c2.toggle("실기", value=False)
-    want_i = c3.toggle("면접", value=False)
+    want_w = c1.toggle("필기", value=False, key="want_w", on_change=_clear_selection)
+    want_p = c2.toggle("실기", value=False, key="want_p", on_change=_clear_selection)
+    want_i = c3.toggle("면접", value=False, key="want_i", on_change=_clear_selection)
 
     # 난이도
-    sel_lv  = st.multiselect("난이도 등급(1~5)", options=[1,2,3,4,5], default=[1,2,3,4,5])
+    sel_lv = st.multiselect(
+        "난이도 등급(1~5)", options=[1,2,3,4,5], default=[1,2,3,4,5],
+        key="sel_lv", on_change=_clear_selection
+    )
 
     # ─────────────────────────────────────────────
     # ★ NCS 직무 필터 (대 → 중 → 소, 이름으로 표시)
@@ -438,7 +449,7 @@ with st.sidebar:
 
         # 1) 대직무 (이름으로 노출)
         large_choices = ["(전체)"] + ncs_large_opts[NCS_L_NAME].tolist() if not ncs_large_opts.empty else ["(전체)"]
-        sel_ncs_large = st.selectbox("대직무", large_choices, index=0, key="ncs_large_name")
+        sel_ncs_large = st.selectbox("대직무", large_choices, index=0, key="ncs_large_name", on_change=_clear_selection)
 
         # 2) 중직무 (선택된 대직무의 하위만 이름으로)
         if df_ncs is not None and sel_ncs_large and sel_ncs_large != "(전체)":
@@ -453,7 +464,7 @@ with st.sidebar:
             mid_df = pd.DataFrame(columns=[NCS_M_CODE, NCS_M_NAME])
             mid_choices = ["(전체)"]
 
-        sel_ncs_mid = st.selectbox("중직무", mid_choices, index=0, key="ncs_mid_name")
+        sel_ncs_mid = st.selectbox("중직무", mid_choices, index=0, key="ncs_mid_name", on_change=_clear_selection)
 
         # 3) 소직무 (선택된 대/중 하위만 이름으로)
         if df_ncs is not None and sel_ncs_large != "(전체)" and sel_ncs_mid != "(전체)":
@@ -480,7 +491,7 @@ with st.sidebar:
             small_df = pd.DataFrame(columns=[NCS_S_CODE, NCS_S_NAME])
             small_choices = ["(전체)"]
 
-        sel_ncs_small = st.selectbox("소직무", small_choices, index=0, key="ncs_small_name")
+        sel_ncs_small = st.selectbox("소직무", small_choices, index=0, key="ncs_small_name", on_change=_clear_selection)
 
     # 선택된 NCS 조합으로 자격증ID 집합 만들기 (소→중→대 우선)
     if df_ncs is not None:
