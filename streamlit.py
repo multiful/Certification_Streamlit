@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# 전공별 자격증 대시보드 — 합격률 없음 분리 + 난이도 등분 보정 + 토글 표시
+# 전공별 자격증 대시보드 — 합격률 없음 분리 + 난이도 등분 보정 + NCS 3단 필터 + 토글 표시
 
 import re, io, qrcode
 import numpy as np
@@ -41,22 +41,20 @@ def apply_pretty_style():
         "grid.alpha": 0.35,
     })
 
-def _force_light_theme_on_mobile():
-    # 모바일에서 라이트 테마를 확실히 강제: 로컬스토리지 + URL + 1회 새로고침
+def _force_light_theme():
+    # 모든 환경에서 라이트 테마 강제: LocalStorage + URL(?theme=light) + 1회 새로고침
     st.markdown("""
     <script>
     (function(){
       try{
-        const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-        if(!isMobile) return;
-        const url = new URL(window.location.href);
-        const THEME_QS = (url.searchParams.get("theme") || "").toLowerCase();
         const LS_KEY = "streamlitTheme";
         const desired = { base: "light" };
         let cur = {};
         try { cur = JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch(e) {}
+        const url = new URL(window.location.href);
+        const qsTheme = (url.searchParams.get("theme") || "").toLowerCase();
         const needLs = (cur.base || "").toLowerCase() !== "light";
-        const needQs = THEME_QS !== "light";
+        const needQs = qsTheme !== "light";
         if (needLs || needQs) {
           localStorage.setItem(LS_KEY, JSON.stringify(Object.assign({}, cur, desired)));
           if (needQs) url.searchParams.set("theme","light");
@@ -71,23 +69,25 @@ def _force_light_theme_on_mobile():
     </script>
     """, unsafe_allow_html=True)
 
+# URL에 ?theme=light 선제 세팅
+try:
+    st.query_params.update({"theme":"light"})
+except Exception:
+    st.experimental_set_query_params(theme="light")
+
 # 시스템 다크 선호 무시하고 라이트로 고정
 st.markdown("<style>:root{ color-scheme: light; }</style>", unsafe_allow_html=True)
 
-use_korean_font()
-apply_pretty_style()
+use_korean_font(); apply_pretty_style()
 
 # -------------------------------------------------
 # 공통 유틸
 # -------------------------------------------------
 def hide_spines(ax):
     for s in ("top","right"):
-        if s in ax.spines:
-            ax.spines[s].set_visible(False)
+        if s in ax.spines: ax.spines[s].set_visible(False)
 
-def _to_key(series):
-    return pd.Series(series, dtype="object").astype(str).str.strip()
-
+def _to_key(series): return pd.Series(series, dtype="object").astype(str).str.strip()
 def badge(t): return f"<span class='pill'>{t}</span>"
 
 def fmt_int(x):
@@ -102,38 +102,31 @@ def _num_in_text(x):
 
 def _emit_scroll_to_top_if_needed():
     if st.session_state.pop("_scroll_to_top", False):
-        st.markdown(
-            """
-            <script>
-            (function(){
-              function goTop(){
-                try {
-                  window.scrollTo({top:0, left:0, behavior:'smooth'});
-                  const main = document.querySelector('section.main');
-                  if (main && main.scrollTo) main.scrollTo({top:0, left:0, behavior:'smooth'});
-                  if (window.parent && window.parent !== window) {
-                    try { window.parent.scrollTo({top:0,left:0,behavior:'smooth'}); } catch(e){}
-                  }
-                } catch(e){}
+        st.markdown("""
+        <script>
+        (function(){
+          function goTop(){
+            try{
+              window.scrollTo({top:0, left:0, behavior:'smooth'});
+              const main = document.querySelector('section.main');
+              if (main && main.scrollTo) main.scrollTo({top:0, left:0, behavior:'smooth'});
+              if (window.parent && window.parent !== window) {
+                try { window.parent.scrollTo({top:0,left:0,behavior:'smooth'}); } catch(e){}
               }
-              setTimeout(goTop, 0);
-              setTimeout(goTop, 150);
-              setTimeout(goTop, 300);
-            })();
-            </script>
-            """,
-            unsafe_allow_html=True
-        )
+            }catch(e){}
+          }
+          setTimeout(goTop, 0); setTimeout(goTop, 150); setTimeout(goTop, 300);
+        })();
+        </script>
+        """, unsafe_allow_html=True)
 
 def _safe_rerun():
     if hasattr(st, "rerun"): st.rerun()
     else: st.experimental_rerun()
 
 def _st_image_compat(img_bytes_or_array):
-    try:
-        st.image(img_bytes_or_array, use_container_width=True)
-    except TypeError:
-        st.image(img_bytes_or_array, use_column_width=True)
+    try: st.image(img_bytes_or_array, use_container_width=True)
+    except TypeError: st.image(img_bytes_or_array, use_column_width=True)
 
 def render_employ_donut_svg(male_pct, female_pct) -> str:
     def clamp(x):
@@ -142,13 +135,10 @@ def render_employ_donut_svg(male_pct, female_pct) -> str:
         return max(0.0, min(100.0, x))
     m = clamp(male_pct); f = clamp(female_pct)
     track = "#e5e7eb"; male = "#2563eb"; female = "#ef4444"
-    cx, cy = 60, 60
-    r_outer, w_outer = 48, 8
-    r_inner, w_inner = 36, 8
-    C_outer = 2 * np.pi * r_outer
-    C_inner = 2 * np.pi * r_inner
-    dash_m = f"{C_outer * m/100:.3f} {C_outer:.3f}"
-    dash_f = f"{C_inner * f/100:.3f} {C_inner:.3f}"
+    cx, cy = 60, 60; r_outer, w_outer = 48, 8; r_inner, w_inner = 36, 8
+    C_outer = 2*np.pi*r_outer; C_inner = 2*np.pi*r_inner
+    dash_m = f"{C_outer*m/100:.3f} {C_outer:.3f}"
+    dash_f = f"{C_inner*f/100:.3f} {C_inner:.3f}"
     return f"""
 <div style="width:100%;display:block;">
   <svg viewBox="0 0 120 120" preserveAspectRatio="xMidYMid meet" style="width:100%;height:auto;display:block;">
@@ -172,12 +162,10 @@ def render_detail_html(text: str) -> str:
     html, ul_open = [], False
     def open_ul():
         nonlocal ul_open
-        if not ul_open:
-            html.append("<ul style='margin:.25rem 0 .25rem 1.1rem;'>"); ul_open = True
+        if not ul_open: html.append("<ul style='margin:.25rem 0 .25rem 1.1rem;'>"); ul_open = True
     def close_ul():
         nonlocal ul_open
-        if ul_open:
-            html.append("</ul>"); ul_open = False
+        if ul_open: html.append("</ul>"); ul_open = False
     for ln in cleaned:
         if re.match(r"^[-•·‣]\s*", ln):
             open_ul(); item = re.sub(r"^[-•·‣]\s*", "", ln); html.append(f"<li>{item}</li>")
@@ -202,11 +190,13 @@ st.markdown("""
 # -------------------------------------------------
 # 데이터 경로 / 키
 # -------------------------------------------------
-CERT_PATHS   = ["1010자격증데이터_통합.xlsx", "data/data_cert.xlsx"]
-MAJOR_PATHS  = ["1013전공정보통합_final.xlsx", "data/data_major.xlsx"]
-JOBS_PATHS   = ["직무분류데이터_병합완_with_ID_v3.xlsx", "data/data_jobs.xlsx"]
-JOBINFO_PATHS= ["직업정보_데이터.xlsx", "data/job_info.xlsx"]
-NO_PASS_PATHS= ["합격률이 나오지 않는 자격증.xlsx", "data/no_pass.xlsx"]
+CERT_PATHS    = ["1010자격증데이터_통합.xlsx", "data/data_cert.xlsx"]
+MAJOR_PATHS   = ["1013전공정보통합_final.xlsx", "data/data_major.xlsx"]
+JOBS_PATHS    = ["직무분류데이터_병합완_with_ID_v3.xlsx", "data/data_jobs.xlsx"]
+JOBINFO_PATHS = ["직업정보_데이터.xlsx", "data/job_info.xlsx"]
+NO_PASS_PATHS = ["합격률이 나오지 않는 자격증.xlsx", "data/no_pass.xlsx"]
+# ★ NCS 직무 분류 파일 (CSV)
+NCS_PATHS     = ["NCS직무상세분류_자격증_ID완전매핑.csv", "data/ncs_mapping.csv"]
 
 YEARS  = [2022, 2023, 2024]
 PHASES = ["1차","2차","3차"]
@@ -233,7 +223,7 @@ num = lambda s: pd.to_numeric(s, errors="coerce")
 # 모바일 감지
 # -------------------------------------------------
 IS_MOBILE = (str(get_query_params().get("m","0")) == "1")
-_force_light_theme_on_mobile()
+_force_light_theme()
 
 # -------------------------------------------------
 # 사이드바 (필터 + QR)
@@ -247,8 +237,7 @@ with st.sidebar:
 
 def render_qr_home():
     qr = qrcode.QRCode(version=1, box_size=5, border=2)
-    qr.add_data(BASE_URL)
-    qr.make(fit=True)
+    qr.add_data(BASE_URL); qr.make(fit=True)
     img = qr.make_image(fill_color="black", back_color="white")
     buf = io.BytesIO(); img.save(buf, format="PNG")
     st.sidebar.image(buf.getvalue(), caption="앱 홈으로 연결", width=110)
@@ -264,6 +253,17 @@ def read_first(paths):
             continue
     return None
 
+def read_first_csv(paths):
+    for p in paths:
+        try:
+            return pd.read_csv(p)              # utf-8 가정
+        except Exception:
+            try:
+                return pd.read_csv(p, encoding="cp949")  # 한글 윈도우 폴백
+            except Exception:
+                continue
+    return None
+
 df = read_first(CERT_PATHS)
 if df is None:
     st.error("자격증 엑셀을 찾지 못했습니다."); st.stop()
@@ -272,6 +272,7 @@ df_major   = read_first(MAJOR_PATHS)
 df_jobs    = read_first(JOBS_PATHS)
 df_jobinfo = read_first(JOBINFO_PATHS)
 df_no      = read_first(NO_PASS_PATHS)
+df_ncs     = read_first_csv(NCS_PATHS)
 
 # 합격률 없음 목록 → 플래그
 EXCLUDE_IDS, EXCLUDE_NAMES = set(), set()
@@ -295,6 +296,45 @@ if df_jobs is not None:
 if df_jobinfo is not None and JOB_SEQ_COL in df_jobinfo.columns:
     df_jobinfo[JOB_SEQ_COL] = _to_key(df_jobinfo[JOB_SEQ_COL])
 
+def read_ncs(paths):
+    for p in paths:
+        try:
+            if str(p).lower().endswith((".csv", ".txt")):
+                return pd.read_csv(p, encoding="utf-8-sig")
+            else:
+                return pd.read_excel(p)
+        except Exception:
+            continue
+    return None
+
+df_ncs = read_ncs(NCS_PATHS)
+
+# 컬럼 alias 고정
+NCS_L_CODE, NCS_L_NAME = "대직무코드", "대직무분류"
+NCS_M_CODE, NCS_M_NAME = "중직무코드", "중직무분류"
+NCS_S_CODE, NCS_S_NAME = "소직무코드", "소직무분류"
+NCS_LIC_ID              = "자격증ID"
+
+if df_ncs is not None and not df_ncs.empty:
+    # 문자열/숫자 혼재 방지: 이름은 문자열, 코드는 문자열로 통일(표시엔 이름만 씀)
+    for c in [NCS_L_NAME, NCS_M_NAME, NCS_S_NAME, NCS_LIC_ID]:
+        if c in df_ncs.columns:
+            df_ncs[c] = df_ncs[c].astype(str).str.strip()
+    for c in [NCS_L_CODE, NCS_M_CODE, NCS_S_CODE]:
+        if c in df_ncs.columns:
+            df_ncs[c] = pd.to_numeric(df_ncs[c], errors="coerce")
+
+    # 옵션 리스트 생성용 중복 제거 (코드+이름 페어로 유일화)
+    ncs_large_opts = (
+        df_ncs[[NCS_L_CODE, NCS_L_NAME]]
+        .dropna()
+        .drop_duplicates()
+        .sort_values([NCS_L_NAME, NCS_L_CODE], kind="stable")
+    )
+else:
+    ncs_large_opts = pd.DataFrame(columns=[NCS_L_CODE, NCS_L_NAME])
+
+
 # -------------------------------------------------
 # 사이드바 계속 (전공 필터)
 # -------------------------------------------------
@@ -309,10 +349,12 @@ with st.sidebar:
             def _on_major_query_change():
                 st.session_state["major_select"] = "(선택)"
 
-            qmaj = st.text_input("전공 검색",
-                                 value=st.session_state.get("maj_q",""),
-                                 key="maj_q", placeholder="전공명을 입력하세요",
-                                 on_change=_on_major_query_change)
+            qmaj = st.text_input(
+                "전공 검색",
+                value=st.session_state.get("maj_q",""),
+                key="maj_q", placeholder="전공명을 입력하세요",
+                on_change=_on_major_query_change
+            )
             majors_view = [m for m in majors_all if (qmaj.strip()=="" or qmaj.lower() in m.lower())]
             sel_major = st.selectbox("학과명", ["(선택)"] + majors_view, index=0, key="major_select")
 
@@ -334,8 +376,7 @@ with st.sidebar:
                         r_m   = float(_row.iloc[0]["취업률_남"])   if pd.notna(_row.iloc[0]["취업률_남"])   else np.nan
                         r_f   = float(_row.iloc[0]["취업률_여"])   if pd.notna(_row.iloc[0]["취업률_여"])   else np.nan
                         with st.container(border=True):
-                            st.caption("전공 취업률")
-                            st.markdown(f"**취업률(전체)** : {r_all:.1f}%  \n")
+                            st.caption("전공 취업률"); st.markdown(f"**취업률(전체)** : {r_all:.1f}%  \n")
                             if pd.notna(r_m) or pd.notna(r_f):
                                 st.markdown(render_employ_donut_svg(r_m, r_f), unsafe_allow_html=True)
                                 st.markdown(
@@ -378,14 +419,94 @@ with st.sidebar:
         sel_buckets = None
         st.caption("등급코드는 ‘국가기술자격’ 선택 시 활성화됩니다.")
 
+    # 시험구성
     c1,c2,c3 = st.columns(3)
     want_w = c1.toggle("필기", value=False)
     want_p = c2.toggle("실기", value=False)
     want_i = c3.toggle("면접", value=False)
+
+    # 난이도
     sel_lv  = st.multiselect("난이도 등급(1~5)", options=[1,2,3,4,5], default=[1,2,3,4,5])
 
+    # ─────────────────────────────────────────────
+    # ★ NCS 직무 필터 (대 → 중 → 소, 이름으로 표시)
+    # ─────────────────────────────────────────────
+    ncs_license_ids = None  # 이 집합이 나중에 결과 필터에 사용됨
+
+    with st.container(border=True):
+        st.caption("NCS 직무 필터")
+
+        # 1) 대직무 (이름으로 노출)
+        large_choices = ["(전체)"] + ncs_large_opts[NCS_L_NAME].tolist() if not ncs_large_opts.empty else ["(전체)"]
+        sel_ncs_large = st.selectbox("대직무", large_choices, index=0, key="ncs_large_name")
+
+        # 2) 중직무 (선택된 대직무의 하위만 이름으로)
+        if df_ncs is not None and sel_ncs_large and sel_ncs_large != "(전체)":
+            mid_df = (
+                df_ncs.loc[df_ncs[NCS_L_NAME] == sel_ncs_large, [NCS_M_CODE, NCS_M_NAME]]
+                .dropna()
+                .drop_duplicates()
+                .sort_values([NCS_M_NAME, NCS_M_CODE], kind="stable")
+            )
+            mid_choices = ["(전체)"] + mid_df[NCS_M_NAME].tolist()
+        else:
+            mid_df = pd.DataFrame(columns=[NCS_M_CODE, NCS_M_NAME])
+            mid_choices = ["(전체)"]
+
+        sel_ncs_mid = st.selectbox("중직무", mid_choices, index=0, key="ncs_mid_name")
+
+        # 3) 소직무 (선택된 대/중 하위만 이름으로)
+        if df_ncs is not None and sel_ncs_large != "(전체)" and sel_ncs_mid != "(전체)":
+            small_df = (
+                df_ncs.loc[
+                    (df_ncs[NCS_L_NAME] == sel_ncs_large) &
+                    (df_ncs[NCS_M_NAME] == sel_ncs_mid),
+                    [NCS_S_CODE, NCS_S_NAME]
+                ]
+                .dropna()
+                .drop_duplicates()
+                .sort_values([NCS_S_NAME, NCS_S_CODE], kind="stable")
+            )
+            small_choices = ["(전체)"] + small_df[NCS_S_NAME].tolist()
+        elif df_ncs is not None and sel_ncs_large != "(전체)":
+            small_df = (
+                df_ncs.loc[df_ncs[NCS_L_NAME] == sel_ncs_large, [NCS_S_CODE, NCS_S_NAME]]
+                .dropna()
+                .drop_duplicates()
+                .sort_values([NCS_S_NAME, NCS_S_CODE], kind="stable")
+            )
+            small_choices = ["(전체)"] + small_df[NCS_S_NAME].tolist()
+        else:
+            small_df = pd.DataFrame(columns=[NCS_S_CODE, NCS_S_NAME])
+            small_choices = ["(전체)"]
+
+        sel_ncs_small = st.selectbox("소직무", small_choices, index=0, key="ncs_small_name")
+
+    # 선택된 NCS 조합으로 자격증ID 집합 만들기 (소→중→대 우선)
+    if df_ncs is not None:
+        any_selected = (
+            (sel_ncs_large and sel_ncs_large != "(전체)") or
+            (sel_ncs_mid   and sel_ncs_mid   != "(전체)") or
+            (sel_ncs_small and sel_ncs_small != "(전체)")
+        )
+
+        if any_selected:
+            mask = pd.Series(True, index=df_ncs.index)
+            if sel_ncs_large and sel_ncs_large != "(전체)":
+                mask &= (df_ncs[NCS_L_NAME] == sel_ncs_large)
+            if sel_ncs_mid and sel_ncs_mid != "(전체)":
+                mask &= (df_ncs[NCS_M_NAME] == sel_ncs_mid)
+            if sel_ncs_small and sel_ncs_small != "(전체)":
+                mask &= (df_ncs[NCS_S_NAME] == sel_ncs_small)
+
+            filtered_ncs = df_ncs.loc[mask]
+            if not filtered_ncs.empty and (NCS_LIC_ID in filtered_ncs.columns):
+                ncs_license_ids = set(_to_key(filtered_ncs[NCS_LIC_ID]).dropna())
+    # ─────────────────────────────────────────────
+
+
+    # 합격률 없는 자격증 토글
     def _on_toggle_no_pass():
-        # 토글 변경 시 페이지/선택 초기화
         st.session_state.page = 1
         for k in ("selected_license","selected_job_seq","selected_job_title"):
             st.session_state.pop(k, None)
@@ -475,7 +596,7 @@ def parse_structure(r):
     return has_w,has_p,has_i,txt
 df[["HAS_W","HAS_P","HAS_I","STRUCT_TXT"]] = df.apply(parse_structure, axis=1, result_type="expand")
 
-# 점수 계산(원본)
+# 점수 계산
 freq_numeric = df[FREQ_COL].apply(freq_to_num) if FREQ_COL in df.columns else pd.Series([np.nan]*len(df))
 inv_overall  = (100.0 - df["OVERALL_PASS(%)"]) / 100.0
 trust_w      = df["APPLICANTS_AVG"].apply(lambda a: trust_weight(a, df["APPLICANTS_AVG"]))
@@ -489,12 +610,11 @@ df["DIFF_SCORE_RAW"] = (
                          + (SCORING["bonus_intv"] if r["HAS_I"] else 0.0), axis=1)
 )
 
-# ★ 난이도 등급: 합격률 없음 제외한 표본으로만 등분
+# 난이도 등급: 합격률 없음 제외한 표본으로만 등분
 valid_mask = ~df["NO_PASS_DATA"]
 levels = qcut_1to5(df.loc[valid_mask, "DIFF_SCORE_RAW"])
 df["DIFF_LEVEL(1-5)"] = np.nan
 df.loc[valid_mask, "DIFF_LEVEL(1-5)"] = levels
-# 참조용 점수 컬럼
 df["DIFF_SCORE"] = df["DIFF_SCORE_RAW"]
 df.loc[~valid_mask, "DIFF_SCORE"] = np.nan
 df.drop(columns=["DIFF_SCORE_RAW"], inplace=True)
@@ -544,14 +664,13 @@ def plot_yearly_pass_rates(row: pd.Series, lic_name: str):
 # 필터 적용 + 결과 목록
 # -------------------------------------------------
 page_size = 6
-
 if st.session_state.get("page") is None:
     st.session_state.page = 1
 
-# 합격률 없는 자격증
+# 합격률 없는 자격증 모드
 show_only_no_pass = st.session_state.get("show_only_no_pass", False)
 
-# 결과 집합
+# 결과 집합(합/무에 따라 분기)
 if show_only_no_pass:
     f = df[df["NO_PASS_DATA"]].copy()
 else:
@@ -565,6 +684,12 @@ if sel_buckets is not None: f = f[pd.to_numeric(f[GRADE_COL], errors="coerce").r
 if want_w: f = f[f["HAS_W"]==True]
 if want_p: f = f[f["HAS_P"]==True]
 if want_i: f = f[f["HAS_I"]==True]
+
+# NCS 선택이 있을 때만 교집합 (전체,전체,전체이면 None이므로 패스)
+if ncs_license_ids is not None:
+    f = f[_to_key(f[ID_COL]).isin(ncs_license_ids)]
+
+
 
 # 정렬/난이도 필터
 if not show_only_no_pass:
@@ -780,4 +905,3 @@ with c_next:
               disabled=(st.session_state.page >= max_pages), on_click=_next_page)
 
 _emit_scroll_to_top_if_needed()
-
