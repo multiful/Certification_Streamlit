@@ -108,6 +108,9 @@
   - (진행 중) 논문 형식의 결과 정리
 
 ---
+
+## 로컬 실행 방법
+
 ```bash
 git clone https://github.com/multiful/Certification_Streamlit.git
 cd Certification_Streamlit
