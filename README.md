@@ -108,7 +108,7 @@
   - (진행 중) 논문 형식의 결과 정리
 
 ---
-
+```bash
 git clone https://github.com/multiful/Certification_Streamlit.git
 cd Certification_Streamlit
 pip install -r requirements.txt
