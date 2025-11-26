@@ -10,4 +10,10 @@ QR :
 
 <img width="185" height="185" alt="cert_dashboard_qr" src="https://github.com/user-attachments/assets/10524008-c014-4a3a-9ecb-220b7021383e" />
 
-현재 앱 개발 중
+현재 앱 배포 준비 중
+
+프레임워크
+- PostgreSQL
+- Plutter
+- fastAPI
+
