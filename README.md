@@ -3,8 +3,15 @@
 
 ![메인 화면](https://github.com/user-attachments/assets/d252efff-aaa1-451d-a919-4c350f04c910)
 
-URL: https://certificationapp-brnj3ctcykqixb9uyz9fb2.streamlit.app/
+---
 
+URL: [URL](https://certificationapp-brnj3ctcykqixb9uyz9fb2.streamlit.app/)
+PDF: [PDF](https://github.com/user-attachments/files/23778303/Streamlit.pdf)
+PPT: [PPT](https://github.com/user-attachments/files/23778321/_._.pptx)
+
+
+
+---
 QR 코드:
 
 <img width="185" height="185" alt="cert_dashboard_qr" src="https://github.com/user-attachments/assets/10524008-c014-4a3a-9ecb-220b7021383e" />
