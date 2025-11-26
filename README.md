@@ -10,8 +10,8 @@
 ## 결과물
 
 - **URL** : [https://certificationapp-brnj3ctcykqixb9uyz9fb2.streamlit.app/](https://certificationapp-brnj3ctcykqixb9uyz9fb2.streamlit.app/)
-- **발표 자료 (PDF)** : [Streamlit.pdf](https://github.com/user-attachments/files/23778303/Streamlit.pdf)
-- **발표 자료 (PPT)** : [_자격증 대시보드_.pptx](https://github.com/user-attachments/files/23778321/_._.pptx)
+- **PDF** : [Streamlit.pdf](https://github.com/user-attachments/files/23778303/Streamlit.pdf)
+- **발표 자료 (PPT)** : [_자격증 대시보드.pptx](https://github.com/user-attachments/files/23778321/_._.pptx)
 
 ---
 
