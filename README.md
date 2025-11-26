@@ -1,5 +1,7 @@
 # Certification Dashboard (Streamlit)
-졸업프로젝트 – 자격증 난이도 분석 및 추천 대시보드
+
+국내 자격증 데이터를 통합하여 **난이도 점수를 계산하고 전공·진로별 추천 자격증을 제공하는**
+졸업 프로젝트용 웹 대시보드입니다.
 
 ![메인 화면](https://github.com/user-attachments/assets/d252efff-aaa1-451d-a919-4c350f04c910)
 
