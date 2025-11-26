@@ -7,4 +7,7 @@
 URL : https://certificationapp-brnj3ctcykqixb9uyz9fb2.streamlit.app/
 
 QR :
+
 <img width="185" height="185" alt="cert_dashboard_qr" src="https://github.com/user-attachments/assets/10524008-c014-4a3a-9ecb-220b7021383e" />
+
+현재 앱 개발 중
