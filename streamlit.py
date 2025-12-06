@@ -7,6 +7,8 @@ import pandas as pd
 import streamlit as st
 import matplotlib.pyplot as plt
 from matplotlib import font_manager, rcParams
+from ui_theme import apply_theme
+apply_theme()
 
 # -------------------------------------------------
 # 기본 설정
@@ -916,3 +918,4 @@ with c_next:
               disabled=(st.session_state.page >= max_pages), on_click=_next_page)
 
 _emit_scroll_to_top_if_needed()
+
