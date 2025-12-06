@@ -232,159 +232,100 @@ IS_MOBILE = (str(get_query_params().get("m","0")) == "1")
 _force_light_theme()
 
 # -------------------------------------------------
-# 사이드바 (필터 + QR)
+# 사이드바 (전공 + 검색/필터 + QR)
 # -------------------------------------------------
+selected_ids = None   # 전공 필터로 걸러진 자격증 ID (없으면 전체)
+
 with st.sidebar:
-    st.header("전공 필터")
-    selected_ids = None
-    use_major = st.toggle("전공으로 필터", value=False)
-    if "last_selected_major" not in st.session_state:
-        st.session_state["last_selected_major"] = None
+    st.markdown("### 🎛 필터")
 
-def render_qr_home():
-    qr = qrcode.QRCode(version=1, box_size=5, border=2)
-    qr.add_data(BASE_URL); qr.make(fit=True)
-    img = qr.make_image(fill_color="black", back_color="white")
-    buf = io.BytesIO(); img.save(buf, format="PNG")
-    st.sidebar.image(buf.getvalue(), caption="앱 홈으로 연결", width=110)
+    # ---------------- 전공 필터 카드 ----------------
+    with st.container(border=True):
+        st.markdown("#### 전공 필터")
 
-# -------------------------------------------------
-# 데이터 로드
-# -------------------------------------------------
-def read_first(paths):
-    for p in paths:
-        try:
-            return pd.read_excel(p)
-        except Exception:
-            continue
-    return None
+        use_major = st.toggle(
+            "전공으로 필터",
+            value=False,
+            help="ON이면 선택한 학과와 연관된 자격증만 목록에 표시합니다.",
+            key="use_major_toggle",
+        )
+        if "last_selected_major" not in st.session_state:
+            st.session_state["last_selected_major"] = None
 
-def read_first_csv(paths):
-    for p in paths:
-        try:
-            return pd.read_csv(p)              # utf-8 가정
-        except Exception:
-            try:
-                return pd.read_csv(p, encoding="cp949")  # 한글 윈도우 폴백
-            except Exception:
-                continue
-    return None
-
-df = read_first(CERT_PATHS)
-if df is None:
-    st.error("자격증 엑셀을 찾지 못했습니다."); st.stop()
-
-df_major   = read_first(MAJOR_PATHS)
-df_jobs    = read_first(JOBS_PATHS)
-df_jobinfo = read_first(JOBINFO_PATHS)
-df_no      = read_first(NO_PASS_PATHS)
-df_ncs     = read_first_csv(NCS_PATHS)
-
-# 합격률 없음 목록 → 플래그
-EXCLUDE_IDS, EXCLUDE_NAMES = set(), set()
-if df_no is not None and not df_no.empty:
-    cols = [str(c) for c in df_no.columns]
-    id_col_guess = next((c for c in cols if "자격증ID" in c or c.lower() in ["id","license_id","cert_id"]), None)
-    name_col_guess = next((c for c in cols if "자격증명" in c or "명" in c or c.lower() in ["name","license_name","cert_name"]), None)
-    if id_col_guess and id_col_guess in df_no.columns:
-        EXCLUDE_IDS = set(_to_key(df_no[id_col_guess]).dropna())
-    if name_col_guess and name_col_guess in df_no.columns:
-        EXCLUDE_NAMES = set(_to_key(df_no[name_col_guess]).dropna())
-
-df["NO_PASS_DATA"] = (
-    _to_key(df[ID_COL]).isin(EXCLUDE_IDS) |
-    _to_key(df[NAME_COL]).isin(EXCLUDE_NAMES)
-)
-
-if df_jobs is not None:
-    if JOB_ID_COL in df_jobs.columns:  df_jobs[JOB_ID_COL]  = _to_key(df_jobs[JOB_ID_COL])
-    if JOB_SEQ_COL in df_jobs.columns: df_jobs[JOB_SEQ_COL] = _to_key(df_jobs[JOB_SEQ_COL])
-if df_jobinfo is not None and JOB_SEQ_COL in df_jobinfo.columns:
-    df_jobinfo[JOB_SEQ_COL] = _to_key(df_jobinfo[JOB_SEQ_COL])
-
-def read_ncs(paths):
-    for p in paths:
-        try:
-            if str(p).lower().endswith((".csv", ".txt")):
-                return pd.read_csv(p, encoding="utf-8-sig")
+        if use_major:
+            if df_major is None:
+                st.error("전공 엑셀을 찾지 못했습니다.")
             else:
-                return pd.read_excel(p)
-        except Exception:
-            continue
-    return None
+                major_name_col, major_id_col = "학과명", "자격증ID"
+                majors_all = sorted(
+                    df_major[major_name_col].astype(str).unique().tolist()
+                )
 
-df_ncs = read_ncs(NCS_PATHS)
+                def _on_major_query_change():
+                    st.session_state["major_select"] = "(선택)"
 
-# 컬럼 alias 고정
-NCS_L_CODE, NCS_L_NAME = "대직무코드", "대직무분류"
-NCS_M_CODE, NCS_M_NAME = "중직무코드", "중직무분류"
-NCS_S_CODE, NCS_S_NAME = "소직무코드", "소직무분류"
-NCS_LIC_ID              = "자격증ID"
+                qmaj = st.text_input(
+                    "전공 검색",
+                    value=st.session_state.get("maj_q", ""),
+                    key="maj_q",
+                    placeholder="전공명을 입력하세요",
+                    on_change=_on_major_query_change,
+                )
 
-if df_ncs is not None and not df_ncs.empty:
-    # 문자열/숫자 혼재 방지: 이름은 문자열, 코드는 문자열로 통일(표시엔 이름만 씀)
-    for c in [NCS_L_NAME, NCS_M_NAME, NCS_S_NAME, NCS_LIC_ID]:
-        if c in df_ncs.columns:
-            df_ncs[c] = df_ncs[c].astype(str).str.strip()
-    for c in [NCS_L_CODE, NCS_M_CODE, NCS_S_CODE]:
-        if c in df_ncs.columns:
-            df_ncs[c] = pd.to_numeric(df_ncs[c], errors="coerce")
+                majors_view = [
+                    m for m in majors_all
+                    if (qmaj.strip() == "" or qmaj.lower() in m.lower())
+                ]
+                sel_major = st.selectbox(
+                    "학과명",
+                    ["(선택)"] + majors_view,
+                    index=0,
+                    key="major_select",
+                )
 
-    # 옵션 리스트 생성용 중복 제거 (코드+이름 페어로 유일화)
-    ncs_large_opts = (
-        df_ncs[[NCS_L_CODE, NCS_L_NAME]]
-        .dropna()
-        .drop_duplicates()
-        .sort_values([NCS_L_NAME, NCS_L_CODE], kind="stable")
-    )
-else:
-    ncs_large_opts = pd.DataFrame(columns=[NCS_L_CODE, NCS_L_NAME])
+                # 전공이 바뀌면 선택된 카드/직무 초기화
+                if sel_major != st.session_state["last_selected_major"]:
+                    for k in ("selected_license", "selected_job_seq", "selected_job_title"):
+                        st.session_state.pop(k, None)
+                    st.session_state["last_selected_major"] = sel_major
 
+                # 선택된 전공 → 자격증ID 리스트
+                if sel_major != "(선택)":
+                    selected_ids = (
+                        df_major.loc[
+                            df_major[major_name_col].astype(str) == sel_major,
+                            major_id_col,
+                        ]
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
 
-# -------------------------------------------------
-# 사이드바 계속 (전공 필터)
-# -------------------------------------------------
-with st.sidebar:
-    if use_major:
-        if df_major is None:
-            st.error("전공 엑셀을 찾지 못했습니다.")
-        else:
-            major_name_col, major_id_col = "학과명","자격증ID"
-            majors_all = sorted(df_major[major_name_col].astype(str).unique().tolist())
+                    # 취업률 미니 카드
+                    rate_cols = ["취업률_전체", "취업률_남", "취업률_여"]
+                    if all(c in df_major.columns for c in rate_cols):
+                        _row = (
+                            df_major.loc[
+                                df_major[major_name_col].astype(str) == sel_major,
+                                rate_cols,
+                            ]
+                            .apply(pd.to_numeric, errors="coerce")
+                            .dropna(how="all")
+                        )
+                        if not _row.empty:
+                            r_all = float(_row.iloc[0]["취업률_전체"]) if pd.notna(_row.iloc[0]["취업률_전체"]) else np.nan
+                            r_m   = float(_row.iloc[0]["취업률_남"])   if pd.notna(_row.iloc[0]["취업률_남"])   else np.nan
+                            r_f   = float(_row.iloc[0]["취업률_여"])   if pd.notna(_row.iloc[0]["취업률_여"])   else np.nan
 
-            def _on_major_query_change():
-                st.session_state["major_select"] = "(선택)"
+                            st.markdown("---")
+                            st.caption("전공 취업률")
+                            st.markdown(f"**취업률(전체)** : {r_all:.1f}%")
 
-            qmaj = st.text_input(
-                "전공 검색",
-                value=st.session_state.get("maj_q",""),
-                key="maj_q", placeholder="전공명을 입력하세요",
-                on_change=_on_major_query_change
-            )
-            majors_view = [m for m in majors_all if (qmaj.strip()=="" or qmaj.lower() in m.lower())]
-            sel_major = st.selectbox("학과명", ["(선택)"] + majors_view, index=0, key="major_select")
-
-            if sel_major != st.session_state["last_selected_major"]:
-                for k in ("selected_license","selected_job_seq","selected_job_title"):
-                    st.session_state.pop(k, None)
-                st.session_state["last_selected_major"] = sel_major
-
-            if sel_major != "(선택)":
-                selected_ids = (df_major.loc[df_major[major_name_col].astype(str)==sel_major, major_id_col]
-                                    .astype(str).unique().tolist())
-
-                rate_cols = ["취업률_전체","취업률_남","취업률_여"]
-                if all(c in df_major.columns for c in rate_cols):
-                    _row = (df_major.loc[df_major[major_name_col].astype(str)==sel_major, rate_cols]
-                                    .apply(pd.to_numeric, errors="coerce").dropna(how="all"))
-                    if not _row.empty:
-                        r_all = float(_row.iloc[0]["취업률_전체"]) if pd.notna(_row.iloc[0]["취업률_전체"]) else np.nan
-                        r_m   = float(_row.iloc[0]["취업률_남"])   if pd.notna(_row.iloc[0]["취업률_남"])   else np.nan
-                        r_f   = float(_row.iloc[0]["취업률_여"])   if pd.notna(_row.iloc[0]["취업률_여"])   else np.nan
-                        with st.container(border=True):
-                            st.caption("전공 취업률"); st.markdown(f"**취업률(전체)** : {r_all:.1f}%  \n")
                             if pd.notna(r_m) or pd.notna(r_f):
-                                st.markdown(render_employ_donut_svg(r_m, r_f), unsafe_allow_html=True)
+                                st.markdown(
+                                    render_employ_donut_svg(r_m, r_f),
+                                    unsafe_allow_html=True,
+                                )
                                 st.markdown(
                                     f"""
                                     <div style="margin-top:-6px; line-height:1.6;">
@@ -399,47 +340,171 @@ with st.sidebar:
                                         <span style="font-weight:700;color:#334155;">{r_f:.1f}%</span>
                                       </div>
                                     </div>
-                                    """, unsafe_allow_html=True
+                                    """,
+                                    unsafe_allow_html=True,
                                 )
+        else:
+            st.caption("전공 필터를 끄면 전체 자격증 기준으로 목록이 구성됩니다.")
 
-    st.divider()
-    st.header("검색 / 필터")
-    q = st.text_input("자격증명 검색", value="", key="q", on_change=_clear_selection)
-    cls_all = sorted(df[CLS_COL].dropna().astype(str).unique().tolist())
-    whitelist = [o for o in cls_all if any(k in o for k in ("국가기술","국가전문","국가민간"))]
-    cls_options = whitelist if whitelist else cls_all
-    sel_cls = st.selectbox(
-        "자격증 분류", ["(전체)"]+cls_options, index=0,
-        key="cls_single", on_change=_clear_selection
-    )
+    # ---------------- 검색 / 필터 카드 ----------------
+    st.markdown("")  # 여백
+    with st.container(border=True):
+        st.markdown("#### 검색 / 필터")
 
-    # 등급코드 필터(국가기술일 때만)
-    grade_nums = pd.to_numeric(df[GRADE_COL], errors="coerce")
-    grade_buckets = [b for b in [100,200,300,400,500] if (grade_nums.round(-2)==b).any()]
-    show_grade_filter = ("국가기술" in sel_cls)
-    if show_grade_filter:
-        sel_buckets = st.multiselect(
-            "등급코드(100단위)",
-            options=grade_buckets or [100,200,300,400,500],
-            format_func=lambda x: GRADE_LABELS.get(x, str(x)),
-            default=grade_buckets or [100,200,300,400,500],
-            key="sel_buckets", on_change=_clear_selection
+        q = st.text_input("자격증명 검색", value="", key="q", on_change=_clear_selection)
+
+        cls_all = sorted(df[CLS_COL].dropna().astype(str).unique().tolist())
+        whitelist = [o for o in cls_all if any(k in o for k in ("국가기술", "국가전문", "국가민간"))]
+        cls_options = whitelist if whitelist else cls_all
+        sel_cls = st.selectbox(
+            "자격증 분류",
+            ["(전체)"] + cls_options,
+            index=0,
+            key="cls_single",
+            on_change=_clear_selection,
         )
-    else:
-        sel_buckets = None
-        st.caption("등급코드는 ‘국가기술자격’ 선택 시 활성화됩니다.")
 
-    # 시험구성
-    c1,c2,c3 = st.columns(3)
-    want_w = c1.toggle("필기", value=False, key="want_w", on_change=_clear_selection)
-    want_p = c2.toggle("실기", value=False, key="want_p", on_change=_clear_selection)
-    want_i = c3.toggle("면접", value=False, key="want_i", on_change=_clear_selection)
+        # 등급코드 필터(국가기술 선택 시만)
+        grade_nums = pd.to_numeric(df[GRADE_COL], errors="coerce")
+        grade_buckets = [b for b in [100, 200, 300, 400, 500] if (grade_nums.round(-2) == b).any()]
+        show_grade_filter = ("국가기술" in sel_cls)
+        if show_grade_filter:
+            sel_buckets = st.multiselect(
+                "등급코드(100단위)",
+                options=grade_buckets or [100, 200, 300, 400, 500],
+                format_func=lambda x: GRADE_LABELS.get(x, str(x)),
+                default=grade_buckets or [100, 200, 300, 400, 500],
+                key="sel_buckets",
+                on_change=_clear_selection,
+            )
+        else:
+            sel_buckets = None
+            st.caption("등급코드는 ‘국가기술자격’ 선택 시 활성화됩니다.")
 
-    # 난이도
-    sel_lv = st.multiselect(
-        "난이도 등급(1~5)", options=[1,2,3,4,5], default=[1,2,3,4,5],
-        key="sel_lv", on_change=_clear_selection
-    )
+        # 시험 구성 토글
+        c1, c2, c3 = st.columns(3)
+        want_w = c1.toggle("필기", value=False, key="want_w", on_change=_clear_selection)
+        want_p = c2.toggle("실기", value=False, key="want_p", on_change=_clear_selection)
+        want_i = c3.toggle("면접", value=False, key="want_i", on_change=_clear_selection)
+
+        # 난이도 레벨 멀티셀렉트 (여기 태그가 파란 pill로 나옴)
+        sel_lv = st.multiselect(
+            "난이도 등급(1~5)",
+            options=[1, 2, 3, 4, 5],
+            default=[1, 2, 3, 4, 5],
+            key="sel_lv",
+            on_change=_clear_selection,
+        )
+
+        # ---- NCS 직무 필터 (이름으로 표시) ----
+        ncs_license_ids = None
+
+        with st.container():
+            st.caption("NCS 직무 필터")
+
+            # 1) 대직무
+            large_choices = ["(전체)"] + ncs_large_opts[NCS_L_NAME].tolist() if not ncs_large_opts.empty else ["(전체)"]
+            sel_ncs_large = st.selectbox(
+                "대직무",
+                large_choices,
+                index=0,
+                key="ncs_large_name",
+                on_change=_clear_selection,
+            )
+
+            # 2) 중직무
+            if df_ncs is not None and sel_ncs_large and sel_ncs_large != "(전체)":
+                mid_df = (
+                    df_ncs.loc[df_ncs[NCS_L_NAME] == sel_ncs_large, [NCS_M_CODE, NCS_M_NAME]]
+                    .dropna()
+                    .drop_duplicates()
+                    .sort_values([NCS_M_NAME, NCS_M_CODE], kind="stable")
+                )
+                mid_choices = ["(전체)"] + mid_df[NCS_M_NAME].tolist()
+            else:
+                mid_df = pd.DataFrame(columns=[NCS_M_CODE, NCS_M_NAME])
+                mid_choices = ["(전체)"]
+
+            sel_ncs_mid = st.selectbox(
+                "중직무",
+                mid_choices,
+                index=0,
+                key="ncs_mid_name",
+                on_change=_clear_selection,
+            )
+
+            # 3) 소직무
+            if df_ncs is not None and sel_ncs_large != "(전체)" and sel_ncs_mid != "(전체)":
+                small_df = (
+                    df_ncs.loc[
+                        (df_ncs[NCS_L_NAME] == sel_ncs_large)
+                        & (df_ncs[NCS_M_NAME] == sel_ncs_mid),
+                        [NCS_S_CODE, NCS_S_NAME],
+                    ]
+                    .dropna()
+                    .drop_duplicates()
+                    .sort_values([NCS_S_NAME, NCS_S_CODE], kind="stable")
+                )
+                small_choices = ["(전체)"] + small_df[NCS_S_NAME].tolist()
+            elif df_ncs is not None and sel_ncs_large != "(전체)":
+                small_df = (
+                    df_ncs.loc[df_ncs[NCS_L_NAME] == sel_ncs_large, [NCS_S_CODE, NCS_S_NAME]]
+                    .dropna()
+                    .drop_duplicates()
+                    .sort_values([NCS_S_NAME, NCS_S_CODE], kind="stable")
+                )
+                small_choices = ["(전체)"] + small_df[NCS_S_NAME].tolist()
+            else:
+                small_df = pd.DataFrame(columns=[NCS_S_CODE, NCS_S_NAME])
+                small_choices = ["(전체)"]
+
+            sel_ncs_small = st.selectbox(
+                "소직무",
+                small_choices,
+                index=0,
+                key="ncs_small_name",
+                on_change=_clear_selection,
+            )
+
+        # 선택된 NCS 조합 → 자격증ID 집합
+        if df_ncs is not None:
+            any_selected = (
+                (sel_ncs_large and sel_ncs_large != "(전체)")
+                or (sel_ncs_mid and sel_ncs_mid != "(전체)")
+                or (sel_ncs_small and sel_ncs_small != "(전체)")
+            )
+
+            if any_selected:
+                mask = pd.Series(True, index=df_ncs.index)
+                if sel_ncs_large and sel_ncs_large != "(전체)":
+                    mask &= df_ncs[NCS_L_NAME] == sel_ncs_large
+                if sel_ncs_mid and sel_ncs_mid != "(전체)":
+                    mask &= df_ncs[NCS_M_NAME] == sel_ncs_mid
+                if sel_ncs_small and sel_ncs_small != "(전체)":
+                    mask &= df_ncs[NCS_S_NAME] == sel_ncs_small
+
+                filtered_ncs = df_ncs.loc[mask]
+                if not filtered_ncs.empty and (NCS_LIC_ID in filtered_ncs.columns):
+                    ncs_license_ids = set(_to_key(filtered_ncs[NCS_LIC_ID]).dropna())
+
+        # 합격률 없는 자격증 토글
+        def _on_toggle_no_pass():
+            st.session_state.page = 1
+            for k in ("selected_license", "selected_job_seq", "selected_job_title"):
+                st.session_state.pop(k, None)
+
+        show_only_no_pass = st.toggle(
+            "합격률 없는 자격증만 보기",
+            value=st.session_state.get("show_only_no_pass", False),
+            key="show_only_no_pass",
+            help="ON이면 합격률 데이터가 없는 자격증만 목록에 표시합니다.",
+            on_change=_on_toggle_no_pass,
+        )
+
+    # ---------------- QR 카드 ----------------
+    st.markdown("")
+    with st.container(border=True):
+        render_qr_home()
 
     # ─────────────────────────────────────────────
     # ★ NCS 직무 필터 (대 → 중 → 소, 이름으로 표시)
@@ -918,4 +983,5 @@ with c_next:
               disabled=(st.session_state.page >= max_pages), on_click=_next_page)
 
 _emit_scroll_to_top_if_needed()
+
 
