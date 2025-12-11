@@ -1,4 +1,4 @@
-# Certification Dashboard (Streamlit)
+# Certification Dashboard (Streamlit) # 베타버전
 
 국내 자격증 데이터를 통합하여 **난이도 점수를 계산하고 전공·진로별 추천 자격증을 제공하는**
 졸업 프로젝트용 웹 대시보드입니다.
@@ -9,7 +9,8 @@
 
 ## 결과물
 
-- **URL** : [https://certificationapp-brnj3ctcykqixb9uyz9fb2.streamlit.app/](https://certificationapp-brnj3ctcykqixb9uyz9fb2.streamlit.app/)
+- **URL** : [streamlit_dashboard](https://certification-streamlit.onrender.com)
+
 - **PDF** : [Streamlit.pdf](https://github.com/user-attachments/files/23778303/Streamlit.pdf)
 - **발표 자료 (PPT)** : [최종발표자료.pptx](https://github.com/user-attachments/files/23778321/_._.pptx)
 
@@ -74,7 +75,8 @@
 
 - **Mobile / App (준비 중)**
   - Flutter (모바일 UI)
-  - FastAPI + PostgreSQL 백엔드와 연동 예정
+  - lender (cloud server)
+  - FastAPI + PostgreSQL(supabase) 백엔드와 연동 예정
 
 ---
 
