@@ -1,3 +1,5 @@
+# streamlit run app.py --server.port 10000 --server.address 0.0.0.0
+
 # -*- coding: utf-8 -*-
 # 전공별 자격증 대시보드 — 합격률 없음 분리 + 난이도 등분 보정 + NCS 3단 필터 + 토글 표시
 
@@ -1209,3 +1211,4 @@ with c_next:
     )
 
 _emit_scroll_to_top_if_needed()
+
