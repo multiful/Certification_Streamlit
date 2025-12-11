@@ -75,7 +75,7 @@
 
 - **Mobile / App (준비 중)**
   - Flutter (모바일 UI)
-  - lender (cloud server)
+  - lender (cloud server) , streamlit cloud
   - FastAPI + PostgreSQL(supabase) 백엔드와 연동 예정
 
 ---
